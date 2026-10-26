@@ -1,0 +1,1554 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>치지직 & 네이버 카페 디스코드 알림 관리자</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #181b23;
+      --card-hover: #1f232e;
+      --border: #2a2f3d;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --chzzk: #00ffa3;
+      --chzzk-dark: #00c47d;
+      --naver: #03c75a;
+      --discord: #5865f2;
+      --danger: #ef4444;
+      --gold: #fbbf24;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", sans-serif;
+      line-height: 1.5;
+      padding-bottom: 60px;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+
+    /* 로그인/회원가입 컨테이너 */
+    .auth-wrapper {
+      max-width: 440px;
+      margin: 70px auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 30px 26px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+    }
+
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      background: #10131a;
+      padding: 5px;
+      border-radius: 10px;
+      margin: 18px 0;
+    }
+
+    .auth-tab {
+      padding: 9px;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 700;
+      border-radius: 7px;
+      cursor: pointer;
+      color: var(--muted);
+      transition: all 0.15s;
+    }
+
+    .auth-tab.active {
+      background: var(--chzzk);
+      color: #09130e;
+    }
+
+    /* 상단 헤더 */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+
+    .header-title h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-title p {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 255, 163, 0.1);
+      border: 1px solid rgba(0, 255, 163, 0.35);
+      color: var(--chzzk);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      background: var(--chzzk);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--chzzk);
+    }
+
+    .user-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #1f2433;
+      border: 1px solid var(--border);
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .admin-pill {
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--gold);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      margin-left: 4px;
+    }
+
+    /* 카드 공통 */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 입력 폼 */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group.full {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      background: #10131a;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 13px;
+      border-radius: 8px;
+      font-size: 0.92rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus {
+      border-color: var(--chzzk);
+    }
+
+    /* 버튼 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--chzzk);
+      color: #09130e;
+    }
+    .btn-primary:hover {
+      background: var(--chzzk-dark);
+    }
+
+    .btn-admin {
+      background: rgba(251, 191, 36, 0.16);
+      border: 1px solid rgba(251, 191, 36, 0.45);
+      color: var(--gold);
+    }
+    .btn-admin:hover {
+      background: rgba(251, 191, 36, 0.28);
+    }
+
+    .btn-discord {
+      background: var(--discord);
+      color: #fff;
+    }
+    .btn-discord:hover {
+      opacity: 0.9;
+    }
+
+    .btn-secondary {
+      background: #232836;
+      border-color: var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover {
+      background: #2c3344;
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #f87171;
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.22);
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.82rem;
+    }
+
+    /* 방송인 카드 리스트 */
+    .streamer-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .streamer-item {
+      background: #13161f;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      transition: border-color 0.15s;
+    }
+
+    .streamer-item:hover {
+      border-color: #3b4256;
+    }
+
+    .streamer-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex: 1;
+      min-width: 260px;
+    }
+
+    .avatar {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--chzzk);
+      background: #232836;
+      flex-shrink: 0;
+    }
+
+    .streamer-info h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .badge {
+      font-size: 0.76rem;
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      text-decoration: none;
+    }
+
+    .badge-chzzk {
+      background: rgba(0, 255, 163, 0.12);
+      color: var(--chzzk);
+      border: 1px solid rgba(0, 255, 163, 0.3);
+    }
+
+    .badge-cafe {
+      background: rgba(3, 199, 90, 0.14);
+      color: #22e57a;
+      border: 1px solid rgba(3, 199, 90, 0.35);
+    }
+
+    .badge-webhook {
+      background: rgba(88, 101, 242, 0.15);
+      color: #9ba5ff;
+      border: 1px solid rgba(88, 101, 242, 0.35);
+    }
+
+    .badge-muted {
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--muted);
+    }
+
+    .streamer-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* 로그 창 */
+    .log-box {
+      background: #0b0d12;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      height: 220px;
+      overflow-y: auto;
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 0.83rem;
+      color: #cbd5e1;
+    }
+
+    .log-line {
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    /* 모달 */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      max-width: 650px;
+      width: 100%;
+      max-height: 92vh;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .checkbox-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+      background: #11141c;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .checkbox-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.86rem;
+      cursor: pointer;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1e293b;
+      border: 1px solid var(--chzzk);
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      display: none;
+      z-index: 2000;
+    }
+
+    /* 관리자 회원 테이블 */
+    table.admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      font-size: 0.85rem;
+    }
+    table.admin-table th, table.admin-table td {
+      border: 1px solid var(--border);
+      padding: 9px 12px;
+      text-align: left;
+    }
+    table.admin-table th {
+      background: #10131a;
+      color: #cbd5e1;
+    }
+
+    details.help-box {
+      margin-top: 12px;
+      background: #12151e;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+    details.help-box summary {
+      cursor: pointer;
+      color: #cbd5e1;
+      font-weight: 600;
+    }
+
+    @media (max-width: 680px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 1. 비로그인 시 표시되는 로그인 / 간편 회원가입 화면 -->
+  <div id="authSection" style="display: none;">
+    <div class="auth-wrapper">
+      <h2 style="font-size: 1.35rem; text-align: center;">🔔 치지직 & 카페 알림 관리자</h2>
+      <p style="font-size: 0.86rem; color: var(--muted); text-align: center; margin-top: 6px;">
+        사용자마다 독립된 공간에서 나만의 방송인 알림과 웹후크를 관리합니다.
+      </p>
+
+      <div id="firstUserNotice" style="display: none; margin-top: 14px; padding: 11px 13px; border-radius: 10px; background: rgba(0, 255, 163, 0.1); border: 1px solid rgba(0, 255, 163, 0.35); font-size: 0.82rem; color: var(--chzzk);">
+        💡 <b>관리자 계정 등록 안내:</b> 첫 번째로 <b>carrot4343</b> 아이디로 가입하시면 관리자 권한과 기존 탬탬버린님 알림 설정이 자동 부여됩니다! (초대 코드: <b>FLOWANGLE</b>)
+      </div>
+
+      <div class="auth-tabs">
+        <div id="tabLogin" class="auth-tab active" onclick="switchAuthMode('login')">로그인</div>
+        <div id="tabRegister" class="auth-tab" onclick="switchAuthMode('register')">회원가입</div>
+      </div>
+
+      <form onsubmit="submitAuth(event)" style="display: flex; flex-direction: column; gap: 14px;">
+        <div class="form-group">
+          <label>아이디</label>
+          <input type="text" id="authUsername" placeholder="사용할 아이디 입력 (2자 이상)" required />
+        </div>
+        <div class="form-group">
+          <label>비밀번호</label>
+          <input type="password" id="authPassword" placeholder="비밀번호 입력 (4자 이상)" required />
+        </div>
+        <div id="loginOptionsGroup" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: #a1a1aa; padding: 2px 2px; user-select: none;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="authRememberId" style="width: 15px; height: 15px; accent-color: var(--chzzk);" />
+            아이디 기억
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="authRememberMe" checked style="width: 15px; height: 15px; accent-color: var(--chzzk);" />
+            자동 로그인 유지
+          </label>
+        </div>
+        <div class="form-group" id="inviteCodeGroup" style="display: none;">
+          <label>초대 코드 (Invite Code) <span class="hint" style="color: var(--chzzk);">* 관리자가 발급한 코드</span></label>
+          <input type="text" id="authInviteCode" placeholder="초대 코드를 입력하세요" />
+        </div>
+        <button type="submit" id="authSubmitBtn" class="btn btn-primary" style="width: 100%; padding: 12px; margin-top: 4px;">
+          로그인하기
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. 로그인 완료 시 표시되는 개인별 대시보드 화면 -->
+  <div id="dashboardSection" class="container" style="display: none;">
+    <div class="header">
+      <div class="header-title">
+        <h1>🔔 치지직 & 네이버 카페 디스코드 알림 관리자</h1>
+        <p>내가 등록한 방송인과 웹후크·쿠키는 내 계정에만 안전하게 보관됩니다.</p>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span id="statusText">실시간 감시 작동 중</span>
+        </div>
+        <div class="user-badge">
+          👤 <span id="currentUserLabel">사용자</span>
+          <span id="adminBadge" class="admin-pill" style="display: none;">👑 관리자</span>
+        </div>
+        <button id="adminPageBtn" class="btn btn-admin btn-sm" onclick="openAdminModal()" style="display: none;">👑 관리자 페이지</button>
+        <button class="btn btn-secondary btn-sm" onclick="triggerCheckNow()">🔄 지금 점검</button>
+        <button class="btn btn-danger btn-sm" onclick="logout()">로그아웃</button>
+      </div>
+    </div>
+
+    <!-- 등록된 방송인(채널) 목록 카드 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          📺 내 알림 방송인 목록
+          <span class="hint" id="streamerCountText">(0명 등록됨)</span>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-secondary" onclick="openFollowBatchModal()" style="border-color: rgba(0, 255, 163, 0.4); color: var(--chzzk);">
+            📺 치지직 팔로우 일괄 연동
+          </button>
+          <button class="btn btn-primary" onclick="openStreamerModal()">➕ 새 방송인 직접 추가</button>
+        </div>
+      </div>
+
+      <div id="streamerList" class="streamer-list"></div>
+    </div>
+
+    <!-- 내 공통 설정 카드 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">⚙️ 내 기본 설정 (디스코드 웹후크 & 네이버 쿠키)</div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-discord btn-sm" onclick="testGlobalWebhook()">🔔 내 웹후크 테스트</button>
+          <button class="btn btn-primary btn-sm" onclick="saveGlobalSettings()">💾 내 설정 저장</button>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>
+            내 기본 디스코드 웹후크(Webhook) URL
+            <span class="hint">https://discord.com/api/webhooks/...</span>
+          </label>
+          <input type="text" id="globalWebhookUrl" placeholder="https://discord.com/api/webhooks/..." />
+        </div>
+
+        <div class="form-group">
+          <label>
+            네이버 쿠키: NID_AUT
+            <span class="hint">카페 회원 전용 게시글·댓글 조회용</span>
+          </label>
+          <input type="password" id="naverNidAut" placeholder="NID_AUT 값을 붙여넣으세요" />
+        </div>
+
+        <div class="form-group">
+          <label>
+            네이버 쿠키: NID_SES
+            <span class="hint"><a href="#" onclick="toggleCookieVisibility(event)" style="color: var(--chzzk);">👁️ 입력값 보기/숨기기</a></span>
+          </label>
+          <input type="password" id="naverNidSes" placeholder="NID_SES 값을 붙여넣으세요" />
+        </div>
+
+        <div class="form-group">
+          <label>
+            서버 순찰 주기 (초)
+            <span class="hint">추천: 30초 ~ 60초</span>
+          </label>
+          <input type="number" id="pollInterval" min="15" max="600" value="60" />
+        </div>
+      </div>
+
+      <details class="help-box">
+        <summary>💡 네이버 로그인 쿠키(NID_AUT, NID_SES) 1분 만에 찾는 방법 보기</summary>
+        <ol style="margin-top: 8px; padding-left: 20px; line-height: 1.7;">
+          <li>크롬/엣지 브라우저에서 네이버에 로그인한 뒤 <a href="https://cafe.naver.com" target="_blank" style="color: var(--chzzk);">네이버 카페</a>에 접속합니다.</li>
+          <li>키보드 <b>F12</b>를 누르고 상단 메뉴의 <b>Application (애플리케이션)</b> 탭 → 왼쪽 <b>Cookies</b> → <code>https://cafe.naver.com</code>을 클릭합니다.</li>
+          <li>표에서 <b>NID_AUT</b>와 <b>NID_SES</b>의 Value(값)를 각각 복사해 위 칸에 붙여넣고 <b>[내 설정 저장]</b>을 누르면 끝납니다!</li>
+        </ol>
+      </details>
+    </div>
+
+    <!-- 실시간 로그 카드 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📋 실시간 작동 로그</div>
+        <button class="btn btn-secondary btn-sm" onclick="fetchLogs()">새로고침</button>
+      </div>
+      <div id="logBox" class="log-box">로그를 불러오는 중...</div>
+    </div>
+  </div>
+
+  <!-- 방송인 추가/수정 모달 창 -->
+  <div id="streamerModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="card-header">
+        <div class="card-title" id="modalTitle">➕ 새 방송인(채널) 추가</div>
+        <button class="btn btn-secondary btn-sm" onclick="closeStreamerModal()">✕ 닫기</button>
+      </div>
+
+      <input type="hidden" id="editStreamerId" />
+
+      <div style="background: rgba(0, 255, 163, 0.08); border: 1px solid rgba(0, 255, 163, 0.25); border-radius: 8px; padding: 10px 14px; font-size: 0.83rem; color: #a7f3d0; margin-bottom: 16px;">
+        💡 <b>선택 안내:</b> 치지직 알림만 받기, 네이버 카페 알림만 받기, 둘 다 받기 모두 가능합니다. (둘 중 최소 1개만 입력하시면 됩니다)
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group full" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; margin-bottom: 4px;">
+          <label style="color: var(--chzzk); font-weight: 600;">
+            🔍 치지직 채널 이름 검색 (선택)
+            <span class="hint" style="color: #a1a1aa;">이름을 검색하면 채널 ID와 사진이 1초 만에 자동 채워집니다</span>
+          </label>
+          <div class="input-row">
+            <input type="text" id="chzzkSearchKeyword" placeholder="스트리머 이름 입력 (예: 시즈키 토아, 탬탬버린)" onkeydown="if(event.key==='Enter'){event.preventDefault();searchChzzkChannels();}" />
+            <button type="button" class="btn btn-secondary" onclick="searchChzzkChannels()">검색</button>
+          </div>
+          <div id="chzzkSearchResults" style="display: none; margin-top: 10px; max-height: 180px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; background: #13141a; padding: 6px;"></div>
+        </div>
+
+        <div class="form-group full">
+          <label>
+            ① 치지직 채널 주소 또는 채널 코드 (선택)
+            <span class="hint">치지직 알림을 원치 않으면 비워두세요</span>
+          </label>
+          <div class="input-row">
+            <input type="text" id="inputChzzk" placeholder="치지직 주소, 32자리 코드, 또는 방송인 이름 (카페만 받을 경우 비워두기)" />
+            <button type="button" class="btn btn-secondary" onclick="previewChzzkLookup()">🔍 치지직 확인</button>
+          </div>
+          <div id="chzzkLookupResult" class="hint" style="color: var(--chzzk); margin-top: 2px;"></div>
+        </div>
+
+        <div class="form-group">
+          <label>방송인 표시 이름 <span class="hint">(자동 입력됨)</span></label>
+          <input type="text" id="inputName" placeholder="비워두면 치지직/카페 이름으로 자동 설정" />
+        </div>
+
+        <div class="form-group">
+          <label>프로필 이미지 URL <span class="hint">(자동 입력됨)</span></label>
+          <input type="text" id="inputProfileImg" placeholder="비워두면 치지직/카페 프로필 사진 자동 사용" />
+        </div>
+
+        <div class="form-group full">
+          <label>
+            ② 네이버 카페 대표 게시글 주소 1개 (선택)
+            <span class="hint">방송인이 쓴 아무 카페 글 주소를 넣으면 카페ID·멤버키가 자동 추출됩니다! (치지직만 받을 경우 비워두기)</span>
+          </label>
+          <div class="input-row">
+            <input type="text" id="inputCafeUrl" placeholder="예: https://cafe.naver.com/2chamcham2/59153" />
+            <button type="button" class="btn btn-secondary" onclick="previewCafeLookup()">🔍 게시글 분석</button>
+          </div>
+          <div id="cafeLookupResult" class="hint" style="color: #22e57a; margin-top: 2px;"></div>
+        </div>
+
+        <div class="form-group">
+          <label>추출된 카페 ID (club_id) <span class="hint">(자동 입력됨)</span></label>
+          <input type="text" id="inputCafeClubId" placeholder="게시글 분석 시 자동 입력" />
+        </div>
+
+        <div class="form-group">
+          <label>추출된 방송인 멤버 키 (memberKey) <span class="hint">(자동 입력됨)</span></label>
+          <input type="text" id="inputCafeMemberKey" placeholder="게시글 분석 시 자동 입력" />
+        </div>
+
+        <div class="form-group full">
+          <label>
+            ③ 개별 디스코드 웹후크 URL (선택)
+            <span class="hint">비워두면 '내 기본 설정'의 기본 웹후크 주소로 알림이 발송됩니다.</span>
+          </label>
+          <input type="text" id="inputCustomWebhook" placeholder="https://discord.com/api/webhooks/..." />
+        </div>
+
+        <div class="form-group full">
+          <label>④ 받을 알림 종류 선택</label>
+          <div class="checkbox-grid">
+            <label class="checkbox-item"><input type="checkbox" id="chkChzzkOpen" checked /> 🔴 치지직 방송 시작</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkChzzkTitle" checked /> 📝 방제 변경</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkChzzkCategory" checked /> 🎮 카테고리 변경</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkChzzkCommunity" checked /> 📢 치지직 커뮤니티</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkChzzkClose" /> ⚫ 방송 종료</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkCafeArticle" checked /> 📗 카페 새 게시글</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkCafeComment" checked /> 💬 카페 새 댓글</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkEnabled" checked /> ✅ 이 방송인 감시 켜기</label>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px;">
+        <button class="btn btn-secondary" onclick="closeStreamerModal()">취소</button>
+        <button class="btn btn-primary" onclick="saveStreamer()">💾 저장하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 치지직 팔로우 채널 일괄 연동 모달 창 -->
+  <div id="followBatchModal" class="modal-backdrop">
+    <div class="modal" style="max-width: 650px;">
+      <div class="card-header">
+        <div class="card-title">📺 치지직 팔로우 채널 일괄 연동</div>
+        <button class="btn btn-secondary btn-sm" onclick="closeFollowBatchModal()">✕ 닫기</button>
+      </div>
+
+      <div style="background: rgba(0, 255, 163, 0.08); border: 1px solid rgba(0, 255, 163, 0.25); border-radius: 8px; padding: 10px 14px; font-size: 0.83rem; color: #a7f3d0; margin-bottom: 14px;">
+        💡 <b>팔로우 연동 안내:</b> 치지직에서 팔로우 중인 채널을 불러옵니다. 알림을 등록할 채널을 체크하고 한 번에 일괄 추가하세요! (카페 알림은 등록 후 개별 설정 가능)
+      </div>
+
+      <div id="followBatchWarning" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: #fca5a5; margin-bottom: 14px;">
+        <span id="followBatchWarningMsg"></span>
+        <div style="margin-top: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="closeFollowBatchModal(); document.getElementById('naverNidAut').focus();">⚙️ 네이버 쿠키 입력하러 가기</button>
+        </div>
+      </div>
+
+      <div id="followBatchToolbar" style="display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnSelectNotifOnly" onclick="filterSelectNotifOnly()" style="color: var(--chzzk); border-color: rgba(0,255,163,0.35);">
+            🔔 치지직 알림 ON만 선택 (<span id="notifOnCount">0</span>)
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="selectAllFollows(true)">전체 선택</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="selectAllFollows(false)">선택 해제</button>
+        </div>
+        <div style="font-size: 0.83rem; color: #a1a1aa;">
+          총 <span id="followTotalCount" style="color: #fff; font-weight: bold;">0</span>개 팔로우 중
+        </div>
+      </div>
+
+      <!-- 채널 목록 리스트 -->
+      <div id="followListContainer" style="max-height: 380px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; background: rgba(0,0,0,0.25); padding: 8px; display: flex; flex-direction: column; gap: 6px;">
+        <div id="followLoadingText" style="text-align: center; padding: 30px; color: #a1a1aa;">
+          ⏳ 치지직 팔로우 목록을 불러오는 중입니다...
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+        <div style="font-size: 0.88rem; color: #e4e4e7;">
+          선택된 채널: <b id="selectedFollowCount" style="color: var(--chzzk); font-size: 1.05rem;">0</b>개
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="closeFollowBatchModal()">취소</button>
+          <button id="btnSubmitBatchFollow" class="btn btn-primary" onclick="submitBatchFollow()" disabled>선택한 채널 일괄 추가</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 관리자 전용 모달 창 (carrot4343) -->
+  <div id="adminModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="card-header">
+        <div class="card-title">👑 관리자 제어 센터 (carrot4343 전용)</div>
+        <button class="btn btn-secondary btn-sm" onclick="closeAdminModal()">✕ 닫기</button>
+      </div>
+
+      <div style="background: #11141c; border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 20px;">
+        <h4 style="font-size: 0.95rem; margin-bottom: 12px; color: var(--gold);">🔑 가입 보안 및 초대 코드 관리</h4>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>현재 가입 초대 코드</label>
+            <input type="text" id="adminInviteCodeInput" />
+          </div>
+          <div class="form-group">
+            <label>신규 회원가입 허용 여부</label>
+            <div style="display: flex; align-items: center; gap: 10px; height: 42px;">
+              <input type="checkbox" id="adminAllowRegInput" style="width: 18px; height: 18px;" />
+              <span id="adminAllowRegLabel" style="font-size: 0.88rem;">허용 중</span>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; margin-top: 14px;">
+          <button class="btn btn-primary btn-sm" onclick="saveAdminConfig()">💾 초대 코드 및 가입 설정 저장</button>
+        </div>
+      </div>
+
+      <div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4 style="font-size: 0.95rem;">👥 전체 등록된 회원 목록 (<span id="adminTotalUsers">0</span>명)</h4>
+          <button class="btn btn-secondary btn-sm" onclick="loadAdminData()">새로고침</button>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>아이디</th>
+                <th>가입 일시</th>
+                <th>등록 방송인</th>
+                <th>웹후크 연동</th>
+                <th>관리</th>
+              </tr>
+            </thead>
+            <tbody id="adminUserTableBody">
+              <tr><td colspan="5" style="text-align: center; color: var(--muted);">회원 목록을 불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    let authMode = "login";
+    let currentSettings = { global: {}, streamers: [] };
+    let isAdminUser = false;
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.style.display = "block";
+      setTimeout(() => { t.style.display = "none"; }, 4000);
+    }
+
+    function switchAuthMode(mode) {
+      authMode = mode;
+      document.getElementById("tabLogin").classList.toggle("active", mode === "login");
+      document.getElementById("tabRegister").classList.toggle("active", mode === "register");
+      document.getElementById("inviteCodeGroup").style.display = mode === "register" ? "flex" : "none";
+      const loginOpts = document.getElementById("loginOptionsGroup");
+      if (loginOpts) loginOpts.style.display = mode === "login" ? "flex" : "none";
+      document.getElementById("authSubmitBtn").textContent =
+        mode === "login" ? "로그인하기" : "초대 코드로 회원가입";
+    }
+
+    async function checkAuthState() {
+      const res = await fetch("/api/auth/me");
+      const data = await res.json();
+      if (data.authenticated) {
+        document.getElementById("authSection").style.display = "none";
+        document.getElementById("dashboardSection").style.display = "block";
+        document.getElementById("currentUserLabel").textContent = data.username;
+        isAdminUser = !!data.is_admin;
+        document.getElementById("adminBadge").style.display = isAdminUser ? "inline-block" : "none";
+        document.getElementById("adminPageBtn").style.display = isAdminUser ? "inline-flex" : "none";
+        await loadAllSettings();
+        await fetchLogs();
+      } else {
+        document.getElementById("dashboardSection").style.display = "none";
+        document.getElementById("authSection").style.display = "block";
+        const savedUser = localStorage.getItem("saved_username");
+        if (savedUser) {
+          const uInput = document.getElementById("authUsername");
+          if (uInput && !uInput.value) {
+            uInput.value = savedUser;
+            const rIdChk = document.getElementById("authRememberId");
+            if (rIdChk) rIdChk.checked = true;
+          }
+        }
+        if (!data.has_any_user) {
+          document.getElementById("firstUserNotice").style.display = "block";
+          switchAuthMode("register");
+        } else {
+          document.getElementById("firstUserNotice").style.display = "none";
+        }
+      }
+    }
+
+    async function submitAuth(e) {
+      e.preventDefault();
+      const username = document.getElementById("authUsername").value.trim();
+      const password = document.getElementById("authPassword").value;
+      const inviteCode = document.getElementById("authInviteCode").value.trim();
+
+      const endpoint = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const payload = { username, password };
+      if (authMode === "register") {
+        payload.invite_code = inviteCode;
+      } else {
+        const rId = document.getElementById("authRememberId")?.checked;
+        const rMe = document.getElementById("authRememberMe")?.checked;
+        payload.remember_me = !!rMe;
+        if (rId) {
+          localStorage.setItem("saved_username", username);
+        } else {
+          localStorage.removeItem("saved_username");
+        }
+      }
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      showToast(data.message);
+      if (data.ok) {
+        document.getElementById("authPassword").value = "";
+        await checkAuthState();
+      }
+    }
+
+    async function logout() {
+      await fetch("/api/auth/logout", { method: "POST" });
+      showToast("로그아웃되었습니다.");
+      await checkAuthState();
+    }
+
+    function toggleCookieVisibility(e) {
+      e.preventDefault();
+      const a = document.getElementById("naverNidAut");
+      const s = document.getElementById("naverNidSes");
+      const nextType = a.type === "password" ? "text" : "password";
+      a.type = nextType;
+      s.type = nextType;
+    }
+
+    async function loadAllSettings() {
+      const res = await fetch("/api/settings");
+      if (res.status === 401) return checkAuthState();
+      currentSettings = await res.json();
+
+      const g = currentSettings.global || {};
+      const interval = currentSettings.poll_interval_seconds || 60;
+      document.getElementById("globalWebhookUrl").value = g.discord_webhook_url || "";
+      document.getElementById("naverNidAut").value = g.naver_nid_aut || "";
+      document.getElementById("naverNidSes").value = g.naver_nid_ses || "";
+      document.getElementById("pollInterval").value = interval;
+      document.getElementById("statusText").textContent = `실시간 감시 작동 중 (${interval}초 주기)`;
+
+      renderStreamers();
+    }
+
+    function renderStreamers() {
+      const listEl = document.getElementById("streamerList");
+      const streamers = currentSettings.streamers || [];
+      document.getElementById("streamerCountText").textContent = `(${streamers.length}명 등록됨)`;
+
+      if (streamers.length === 0) {
+        listEl.innerHTML = `
+          <div style="text-align: center; padding: 32px; color: var(--muted);">
+            아직 등록된 방송인이 없습니다. 오른쪽 위의 <b>[➕ 새 방송인(채널) 추가]</b> 버튼을 눌러 추가해 보세요!
+          </div>
+        `;
+        return;
+      }
+
+      listEl.innerHTML = streamers.map((st) => {
+        const avatar = st.profile_image_url || st.cafe_profile_image_url || "https://ssl.pstatic.net/static/nng/glive/icon/favicon.png";
+        const chzzkBadge = st.chzzk_channel_id
+          ? `<a class="badge badge-chzzk" href="https://chzzk.naver.com/${st.chzzk_channel_id}" target="_blank">🟢 치지직 연결됨 (${st.chzzk_channel_id.slice(0, 6)}...)</a>`
+          : `<span class="badge badge-muted">치지직 알림 끔</span>`;
+
+        const cafeBadge = (st.cafe_club_id && st.cafe_member_key)
+          ? `<a class="badge badge-cafe" href="https://cafe.naver.com/ca-fe/cafes/${st.cafe_club_id}/members/${st.cafe_member_key}" target="_blank">📗 네이버 카페 연결됨 (ID: ${st.cafe_club_id})</a>`
+          : `<span class="badge badge-muted">카페 알림 끔</span>`;
+
+        const webhookBadge = st.custom_webhook_url
+          ? `<span class="badge badge-webhook">개별 웹후크 사용</span>`
+          : `<span class="badge badge-webhook">내 기본 웹후크 사용</span>`;
+
+        const activeBadge = st.enabled !== false
+          ? `<span style="font-size: 0.78rem; color: var(--chzzk);">● 감시 중</span>`
+          : `<span style="font-size: 0.78rem; color: var(--muted);">⏸ 일시정지됨</span>`;
+
+        return `
+          <div class="streamer-item">
+            <div class="streamer-left">
+              <img class="avatar" src="${avatar}" alt="${st.name}" onerror="this.src='https://ssl.pstatic.net/static/nng/glive/icon/favicon.png'" />
+              <div class="streamer-info">
+                <h3>${st.name || "이름 없음"} ${activeBadge}</h3>
+                <div class="badges">
+                  ${chzzkBadge}
+                  ${cafeBadge}
+                  ${webhookBadge}
+                </div>
+              </div>
+            </div>
+            <div class="streamer-actions">
+              <button class="btn btn-discord btn-sm" onclick="sendStreamerPreview('${st.id}')">🔔 실전 미리보기 발송</button>
+              <button class="btn btn-secondary btn-sm" onclick="openStreamerModal('${st.id}')">✏️ 수정</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteStreamer('${st.id}')">🗑️ 삭제</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function saveGlobalSettings() {
+      const payload = {
+        discord_webhook_url: document.getElementById("globalWebhookUrl").value.trim(),
+        naver_nid_aut: document.getElementById("naverNidAut").value.trim(),
+        naver_nid_ses: document.getElementById("naverNidSes").value.trim(),
+        poll_interval_seconds: parseInt(document.getElementById("pollInterval").value || "60", 10),
+      };
+      const res = await fetch("/api/settings/global", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      showToast(data.message || "내 설정이 저장되었습니다!");
+      if (data.ok) {
+        await loadAllSettings();
+        await fetchLogs();
+      }
+    }
+
+    async function testGlobalWebhook() {
+      await saveGlobalSettings();
+      showToast("디스코드로 테스트 알림을 전송 중입니다...");
+      const res = await fetch("/api/test-webhook", { method: "POST" });
+      const data = await res.json();
+      showToast(data.message);
+      await fetchLogs();
+    }
+
+    async function sendStreamerPreview(streamerId) {
+      showToast("디스코드로 해당 방송인의 치지직·카페 미리보기 카드를 전송 중입니다...");
+      const res = await fetch(`/api/streamers/${streamerId}/preview`, { method: "POST" });
+      const data = await res.json();
+      showToast(data.message);
+      await fetchLogs();
+    }
+
+    async function triggerCheckNow() {
+      showToast("전체 방송인 즉시 점검을 실행합니다...");
+      const res = await fetch("/api/check-now", { method: "POST" });
+      const data = await res.json();
+      showToast(data.message);
+      await fetchLogs();
+    }
+
+    function openStreamerModal(streamerId = null) {
+      document.getElementById("chzzkLookupResult").textContent = "";
+      document.getElementById("cafeLookupResult").textContent = "";
+      const kwInput = document.getElementById("chzzkSearchKeyword");
+      if (kwInput) kwInput.value = "";
+      const sResults = document.getElementById("chzzkSearchResults");
+      if (sResults) {
+        sResults.style.display = "none";
+        sResults.innerHTML = "";
+      }
+
+      if (!streamerId) {
+        document.getElementById("modalTitle").textContent = "➕ 새 방송인(채널) 추가";
+        document.getElementById("editStreamerId").value = "";
+        document.getElementById("inputChzzk").value = "";
+        document.getElementById("inputName").value = "";
+        document.getElementById("inputProfileImg").value = "";
+        document.getElementById("inputCafeUrl").value = "";
+        document.getElementById("inputCafeClubId").value = "";
+        document.getElementById("inputCafeMemberKey").value = "";
+        document.getElementById("inputCustomWebhook").value = "";
+        document.getElementById("chkChzzkOpen").checked = true;
+        document.getElementById("chkChzzkTitle").checked = true;
+        document.getElementById("chkChzzkCategory").checked = true;
+        document.getElementById("chkChzzkCommunity").checked = true;
+        document.getElementById("chkChzzkClose").checked = false;
+        document.getElementById("chkCafeArticle").checked = true;
+        document.getElementById("chkCafeComment").checked = true;
+        document.getElementById("chkEnabled").checked = true;
+      } else {
+        const st = (currentSettings.streamers || []).find((x) => x.id === streamerId);
+        if (!st) return;
+        document.getElementById("modalTitle").textContent = `✏️ ${st.name} 설정 수정`;
+        document.getElementById("editStreamerId").value = st.id;
+        document.getElementById("inputChzzk").value = st.chzzk_input || st.chzzk_channel_id || "";
+        document.getElementById("inputName").value = st.name || "";
+        document.getElementById("inputProfileImg").value = st.profile_image_url || "";
+        document.getElementById("inputCafeUrl").value = st.cafe_article_url || "";
+        document.getElementById("inputCafeClubId").value = st.cafe_club_id || "";
+        document.getElementById("inputCafeMemberKey").value = st.cafe_member_key || "";
+        document.getElementById("inputCustomWebhook").value = st.custom_webhook_url || "";
+        document.getElementById("chkChzzkOpen").checked = st.notify_chzzk_open !== false;
+        document.getElementById("chkChzzkTitle").checked = st.notify_chzzk_title !== false;
+        document.getElementById("chkChzzkCategory").checked = st.notify_chzzk_category !== false;
+        document.getElementById("chkChzzkCommunity").checked = st.notify_chzzk_community !== false;
+        document.getElementById("chkChzzkClose").checked = !!st.notify_chzzk_close;
+        document.getElementById("chkCafeArticle").checked = st.notify_cafe_article !== false;
+        document.getElementById("chkCafeComment").checked = st.notify_cafe_comment !== false;
+        document.getElementById("chkEnabled").checked = st.enabled !== false;
+      }
+
+      document.getElementById("streamerModal").classList.add("active");
+    }
+
+    function closeStreamerModal() {
+      document.getElementById("streamerModal").classList.remove("active");
+    }
+
+    async function previewChzzkLookup() {
+      const raw = document.getElementById("inputChzzk").value.trim();
+      if (!raw) {
+        showToast("치지직 주소, 채널 코드 또는 방송인 이름을 입력해 주세요.");
+        return;
+      }
+      const resEl = document.getElementById("chzzkLookupResult");
+      resEl.textContent = "치지직 채널 정보를 조회 중입니다...";
+      const res = await fetch("/api/lookup/chzzk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: raw }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("inputName").value = data.name;
+        document.getElementById("inputProfileImg").value = data.profile_image_url;
+        document.getElementById("inputChzzk").value = data.channel_id;
+        resEl.textContent = `✅ 확인 완료: ${data.name} (채널ID: ${data.channel_id})`;
+      } else {
+        resEl.textContent = `❌ ${data.message}`;
+      }
+    }
+
+    async function previewCafeLookup() {
+      const url = document.getElementById("inputCafeUrl").value.trim();
+      if (!url) {
+        showToast("방송인이 작성한 네이버 카페 게시글 주소를 입력해 주세요.");
+        return;
+      }
+      const resEl = document.getElementById("cafeLookupResult");
+      resEl.textContent = "카페 게시글에서 작성자 정보를 추출 중입니다...";
+      const res = await fetch("/api/lookup/cafe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          article_url: url,
+          nid_aut: document.getElementById("naverNidAut").value.trim(),
+          nid_ses: document.getElementById("naverNidSes").value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("inputCafeClubId").value = data.club_id;
+        document.getElementById("inputCafeMemberKey").value = data.member_key;
+        if (!document.getElementById("inputName").value && data.nick) {
+          document.getElementById("inputName").value = data.nick;
+        }
+        if (!document.getElementById("inputProfileImg").value && data.profile_image_url) {
+          document.getElementById("inputProfileImg").value = data.profile_image_url;
+        }
+        resEl.textContent = `✅ 추출 완료: 작성자 '${data.nick}' | 카페ID: ${data.club_id} | 멤버키: ${data.member_key.slice(0, 12)}...`;
+      } else {
+        resEl.textContent = `❌ ${data.message}`;
+      }
+    }
+
+    async function saveStreamer() {
+      const payload = {
+        id: document.getElementById("editStreamerId").value.trim(),
+        chzzk_input: document.getElementById("inputChzzk").value.trim(),
+        name: document.getElementById("inputName").value.trim(),
+        profile_image_url: document.getElementById("inputProfileImg").value.trim(),
+        cafe_article_url: document.getElementById("inputCafeUrl").value.trim(),
+        cafe_club_id: document.getElementById("inputCafeClubId").value.trim(),
+        cafe_member_key: document.getElementById("inputCafeMemberKey").value.trim(),
+        custom_webhook_url: document.getElementById("inputCustomWebhook").value.trim(),
+        notify_chzzk_open: document.getElementById("chkChzzkOpen").checked,
+        notify_chzzk_title: document.getElementById("chkChzzkTitle").checked,
+        notify_chzzk_category: document.getElementById("chkChzzkCategory").checked,
+        notify_chzzk_community: document.getElementById("chkChzzkCommunity").checked,
+        notify_chzzk_close: document.getElementById("chkChzzkClose").checked,
+        notify_cafe_article: document.getElementById("chkCafeArticle").checked,
+        notify_cafe_comment: document.getElementById("chkCafeComment").checked,
+        enabled: document.getElementById("chkEnabled").checked,
+      };
+
+      const res = await fetch("/api/streamers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showToast(`⚠️ ${data.message}`);
+        return;
+      }
+      showToast(data.message || "저장되었습니다!");
+      closeStreamerModal();
+      await loadAllSettings();
+      await fetchLogs();
+    }
+
+    async function deleteStreamer(streamerId) {
+      if (!confirm("정말 이 방송인을 내 알림 목록에서 삭제할까요?")) return;
+      const res = await fetch(`/api/streamers/${streamerId}`, { method: "DELETE" });
+      const data = await res.json();
+      showToast(data.message || "삭제되었습니다.");
+      await loadAllSettings();
+      await fetchLogs();
+    }
+
+    /* 치지직 채널 검색 기능 */
+    async function searchChzzkChannels() {
+      const kw = document.getElementById("chzzkSearchKeyword").value.trim();
+      if (!kw) {
+        showToast("검색할 스트리머 이름을 입력해 주세요.");
+        return;
+      }
+      const box = document.getElementById("chzzkSearchResults");
+      box.style.display = "block";
+      box.innerHTML = `<div style="text-align: center; padding: 12px; color: #a1a1aa;">🔍 치지직에서 '${kw}' 검색 중...</div>`;
+
+      try {
+        const res = await fetch(`/api/chzzk/search?keyword=${encodeURIComponent(kw)}`);
+        const data = await res.json();
+        if (!data.ok || !data.channels || data.channels.length === 0) {
+          box.innerHTML = `<div style="text-align: center; padding: 12px; color: #f87171;">검색 결과가 없습니다.</div>`;
+          return;
+        }
+
+        box.innerHTML = data.channels.map(ch => {
+          const liveBadge = ch.openLive
+            ? `<span style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">🔴 LIVE</span>`
+            : `<span style="background: rgba(255, 255, 255, 0.06); color: #a1a1aa; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">⚫ OFF</span>`;
+          const followers = ch.followerCount > 10000 
+            ? `${(ch.followerCount / 10000).toFixed(1)}만명` 
+            : `${ch.followerCount}명`;
+
+          return `
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+              <div style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
+                <img src="${ch.channelImageUrl}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;" />
+                <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <div style="font-weight: 600; color: #fff; font-size: 0.88rem; display: flex; align-items: center; gap: 6px;">
+                    ${ch.channelName} ${liveBadge}
+                  </div>
+                  <div style="font-size: 0.75rem; color: #a1a1aa;">팔로워 ${followers}</div>
+                </div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" onclick="selectChzzkChannel('${ch.channelId}', '${ch.channelName.replace(/'/g, "\\'")}', '${ch.channelImageUrl.replace(/'/g, "\\'")}')">선택</button>
+            </div>
+          `;
+        }).join("");
+      } catch (err) {
+        box.innerHTML = `<div style="text-align: center; padding: 12px; color: #f87171;">검색 중 오류가 발생했습니다: ${err.message}</div>`;
+      }
+    }
+
+    function selectChzzkChannel(cid, name, img) {
+      document.getElementById("inputChzzk").value = cid;
+      document.getElementById("inputName").value = name;
+      document.getElementById("inputProfileImg").value = img;
+      document.getElementById("chzzkLookupResult").textContent = `✅ 선택 완료: ${name} (채널 ID: ${cid})`;
+      document.getElementById("chzzkSearchResults").style.display = "none";
+      showToast(`'${name}' 채널 정보가 자동 완성되었습니다.`);
+    }
+
+    /* 치지직 팔로우 일괄 연동 모달 기능 */
+    let cachedFollowChannels = [];
+
+    async function openFollowBatchModal() {
+      document.getElementById("followBatchModal").classList.add("active");
+      document.getElementById("followBatchWarning").style.display = "none";
+      document.getElementById("followBatchToolbar").style.display = "none";
+      document.getElementById("followListContainer").innerHTML = `
+        <div style="text-align: center; padding: 40px; color: #a1a1aa;">
+          ⏳ 치지직 팔로우 목록을 불러오는 중입니다...
+        </div>
+      `;
+      document.getElementById("selectedFollowCount").textContent = "0";
+      document.getElementById("btnSubmitBatchFollow").disabled = true;
+
+      try {
+        const res = await fetch("/api/chzzk/followings");
+        const data = await res.json();
+
+        if (data.need_cookies) {
+          document.getElementById("followBatchWarning").style.display = "block";
+          document.getElementById("followBatchWarningMsg").textContent = data.message;
+          document.getElementById("followListContainer").innerHTML = `
+            <div style="text-align: center; padding: 30px; color: #a1a1aa;">
+              네이버 쿠키(NID_AUT, NID_SES)를 먼저 등록하시면 팔로우 목록이 표시됩니다.
+            </div>
+          `;
+          return;
+        }
+
+        if (!data.ok || !data.channels) {
+          document.getElementById("followListContainer").innerHTML = `
+            <div style="text-align: center; padding: 30px; color: #f87171;">
+              ❌ ${data.message || '목록을 불러오지 못했습니다.'}
+            </div>
+          `;
+          return;
+        }
+
+        cachedFollowChannels = data.channels;
+        document.getElementById("followBatchToolbar").style.display = "flex";
+        document.getElementById("followTotalCount").textContent = cachedFollowChannels.length;
+
+        const notifOnList = cachedFollowChannels.filter(c => c.notification && !c.already_added);
+        document.getElementById("notifOnCount").textContent = notifOnList.length;
+
+        renderFollowChannelsList();
+        filterSelectNotifOnly();
+      } catch (err) {
+        document.getElementById("followListContainer").innerHTML = `
+          <div style="text-align: center; padding: 30px; color: #f87171;">
+            ❌ 오류가 발생했습니다: ${err.message}
+          </div>
+        `;
+      }
+    }
+
+    function closeFollowBatchModal() {
+      document.getElementById("followBatchModal").classList.remove("active");
+    }
+
+    function renderFollowChannelsList() {
+      const container = document.getElementById("followListContainer");
+      if (!cachedFollowChannels.length) {
+        container.innerHTML = `<div style="text-align: center; padding: 30px; color: #a1a1aa;">팔로우 중인 채널이 없습니다.</div>`;
+        return;
+      }
+
+      container.innerHTML = cachedFollowChannels.map((ch) => {
+        const isAdded = ch.already_added;
+        const notifBadge = ch.notification
+          ? `<span style="background: rgba(0, 255, 163, 0.15); color: var(--chzzk); font-size: 0.72rem; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(0, 255, 163, 0.3);">🔔 알림 ON</span>`
+          : `<span style="background: rgba(255, 255, 255, 0.06); color: #71717a; font-size: 0.72rem; padding: 2px 7px; border-radius: 4px;">🔕 알림 OFF</span>`;
+        const liveBadge = ch.openLive
+          ? `<span style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">🔴 LIVE</span>`
+          : `<span style="background: rgba(255, 255, 255, 0.06); color: #a1a1aa; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">⚫ OFF</span>`;
+
+        return `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); ${isAdded ? 'opacity: 0.55;' : ''}">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <input type="checkbox" class="follow-chk" data-cid="${ch.channelId}" data-name="${encodeURIComponent(ch.channelName)}" data-img="${encodeURIComponent(ch.channelImageUrl)}" ${isAdded ? 'disabled' : ''} onchange="updateSelectedFollowCount()" style="width: 17px; height: 17px; accent-color: var(--chzzk); cursor: pointer;" />
+              <img src="${ch.channelImageUrl}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);" />
+              <div>
+                <div style="font-weight: 600; color: #fff; font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                  ${ch.channelName} ${liveBadge}
+                </div>
+                <div style="display: flex; gap: 6px; align-items: center; margin-top: 2px;">
+                  ${notifBadge}
+                  ${isAdded ? '<span style="color: #60a5fa; font-size: 0.72rem; background: rgba(96,165,250,0.12); padding: 2px 6px; border-radius: 4px;">✔ 이미 등록됨</span>' : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function filterSelectNotifOnly() {
+      const chks = document.querySelectorAll(".follow-chk");
+      chks.forEach(chk => {
+        if (chk.disabled) return;
+        const cid = chk.getAttribute("data-cid");
+        const found = cachedFollowChannels.find(c => c.channelId === cid);
+        chk.checked = !!(found && found.notification);
+      });
+      updateSelectedFollowCount();
+    }
+
+    function selectAllFollows(selectAll) {
+      const chks = document.querySelectorAll(".follow-chk");
+      chks.forEach(chk => {
+        if (!chk.disabled) chk.checked = selectAll;
+      });
+      updateSelectedFollowCount();
+    }
+
+    function updateSelectedFollowCount() {
+      const chks = document.querySelectorAll(".follow-chk:checked");
+      const count = chks.length;
+      document.getElementById("selectedFollowCount").textContent = count;
+      document.getElementById("btnSubmitBatchFollow").disabled = count === 0;
+    }
+
+    async function submitBatchFollow() {
+      const chks = document.querySelectorAll(".follow-chk:checked");
+      if (!chks.length) {
+        showToast("추가할 채널을 선택해 주세요.");
+        return;
+      }
+
+      const streamers = Array.from(chks).map(chk => ({
+        channel_id: chk.getAttribute("data-cid"),
+        name: decodeURIComponent(chk.getAttribute("data-name")),
+        profile_image_url: decodeURIComponent(chk.getAttribute("data-img")),
+      }));
+
+      const btn = document.getElementById("btnSubmitBatchFollow");
+      btn.disabled = true;
+      btn.textContent = "추가 중...";
+
+      try {
+        const res = await fetch("/api/streamers/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ streamers }),
+        });
+        const data = await res.json();
+        showToast(data.message);
+        if (data.ok) {
+          closeFollowBatchModal();
+          await loadAllSettings();
+        }
+      } catch (err) {
+        showToast(`일괄 추가 중 오류 발생: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "선택한 채널 일괄 추가";
+      }
+    }
+
+    /* 관리자 페이지 제어 함수 */
+    async function openAdminModal() {
+      if (!isAdminUser) return;
+      document.getElementById("adminModal").classList.add("active");
+      await loadAdminData();
+    }
+
+    function closeAdminModal() {
+      document.getElementById("adminModal").classList.remove("active");
+    }
+
+    async function loadAdminData() {
+      const res = await fetch("/api/admin/summary");
+      if (res.status === 403) return showToast("관리자 권한이 없습니다.");
+      const data = await res.json();
+
+      document.getElementById("adminInviteCodeInput").value = data.invite_code || "FLOWANGLE";
+      document.getElementById("adminAllowRegInput").checked = !!data.allow_registration;
+      document.getElementById("adminAllowRegLabel").textContent = data.allow_registration ? "허용 중" : "차단됨";
+      document.getElementById("adminTotalUsers").textContent = data.total_users || 0;
+
+      const tbody = document.getElementById("adminUserTableBody");
+      if (!data.users || data.users.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--muted);">가입된 회원이 없습니다.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = data.users.map((u) => {
+        const adminTag = u.is_admin ? `<span class="admin-pill">관리자</span>` : "";
+        const webhookTag = u.has_webhook ? `<span style="color: var(--chzzk);">등록됨</span>` : `<span style="color: var(--muted);">미등록</span>`;
+        const actionBtn = u.is_admin
+          ? `<span style="color: var(--muted);">-</span>`
+          : `<button class="btn btn-danger btn-sm" onclick="adminDeleteUser('${u.username}')">탈퇴</button>`;
+
+        return `
+          <tr>
+            <td><b>${u.username}</b> ${adminTag}</td>
+            <td>${u.created_at}</td>
+            <td>${u.streamer_count}개</td>
+            <td>${webhookTag}</td>
+            <td>${actionBtn}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function saveAdminConfig() {
+      const invite_code = document.getElementById("adminInviteCodeInput").value.trim();
+      const allow_registration = document.getElementById("adminAllowRegInput").checked;
+
+      const res = await fetch("/api/admin/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite_code, allow_registration }),
+      });
+      const data = await res.json();
+      showToast(data.message);
+      await loadAdminData();
+    }
+
+    async function adminDeleteUser(username) {
+      if (!confirm(`정말 '${username}' 회원을 강제 탈퇴(삭제)할까요? 해당 회원의 모든 설정이 삭제됩니다.`)) return;
+      const res = await fetch(`/api/admin/users/${username}`, { method: "DELETE" });
+      const data = await res.json();
+      showToast(data.message);
+      await loadAdminData();
+    }
+
+    async function fetchLogs() {
+      try {
+        const res = await fetch("/api/logs");
+        if (res.status === 401) return;
+        const data = await res.json();
+        const box = document.getElementById("logBox");
+        if (!data.logs || data.logs.length === 0) {
+          box.innerHTML = `<div class="log-line">아직 기록된 로그가 없습니다.</div>`;
+          return;
+        }
+        box.innerHTML = data.logs.map((l) => `<div class="log-line">${l}</div>`).join("");
+      } catch (e) {}
+    }
+
+    checkAuthState();
+    setInterval(fetchLogs, 5000);
+  </script>
+</body>
+</html>
