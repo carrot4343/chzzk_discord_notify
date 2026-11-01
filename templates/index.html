@@ -741,7 +741,15 @@
         </div>
 
         <div class="form-group full">
-          <label>④ 받을 알림 종류 선택</label>
+          <label>
+            ④ 디스코드 역할 멘션 (선택)
+            <span class="hint">방송 시작(뱅온) 시 호출할 역할 태그 (비워두면 멘션 없음). 예: @everyone, @here, 또는 &lt;@&amp;역할ID&gt;</span>
+          </label>
+          <input type="text" id="inputMentionText" placeholder="예: @everyone 또는 <@&123456789012345678> (기본값: 멘션 없음)" />
+        </div>
+
+        <div class="form-group full">
+          <label>⑤ 받을 알림 종류 선택</label>
           <div class="checkbox-grid">
             <label class="checkbox-item"><input type="checkbox" id="chkChzzkOpen" checked /> 🔴 치지직 방송 시작</label>
             <label class="checkbox-item"><input type="checkbox" id="chkChzzkTitle" checked /> 📝 방제 변경</label>
@@ -1017,6 +1025,16 @@
           ? `<span class="badge badge-webhook">개별 웹후크 사용</span>`
           : `<span class="badge badge-webhook">내 기본 웹후크 사용</span>`;
 
+        const rawMentionLabel = st.mention_role_name || st.mention_text || (st.mention_role_id ? `<@&${st.mention_role_id}>` : "");
+        const safeMentionLabel = rawMentionLabel
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+        const mentionBadge = safeMentionLabel
+          ? `<span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3);">🔔 ${safeMentionLabel}</span>`
+          : "";
+
         const activeBadge = st.enabled !== false
           ? `<span style="font-size: 0.78rem; color: var(--chzzk);">● 감시 중</span>`
           : `<span style="font-size: 0.78rem; color: var(--muted);">⏸ 일시정지됨</span>`;
@@ -1031,6 +1049,7 @@
                   ${chzzkBadge}
                   ${cafeBadge}
                   ${webhookBadge}
+                  ${mentionBadge}
                 </div>
               </div>
             </div>
@@ -1110,6 +1129,7 @@
         document.getElementById("inputCafeClubId").value = "";
         document.getElementById("inputCafeMemberKey").value = "";
         document.getElementById("inputCustomWebhook").value = "";
+        document.getElementById("inputMentionText").value = "";
         document.getElementById("chkChzzkOpen").checked = true;
         document.getElementById("chkChzzkTitle").checked = true;
         document.getElementById("chkChzzkCategory").checked = true;
@@ -1130,6 +1150,7 @@
         document.getElementById("inputCafeClubId").value = st.cafe_club_id || "";
         document.getElementById("inputCafeMemberKey").value = st.cafe_member_key || "";
         document.getElementById("inputCustomWebhook").value = st.custom_webhook_url || "";
+        document.getElementById("inputMentionText").value = st.mention_text || (st.mention_role_id ? "<@&" + st.mention_role_id + ">" : "");
         document.getElementById("chkChzzkOpen").checked = st.notify_chzzk_open !== false;
         document.getElementById("chkChzzkTitle").checked = st.notify_chzzk_title !== false;
         document.getElementById("chkChzzkCategory").checked = st.notify_chzzk_category !== false;
@@ -1214,6 +1235,7 @@
         cafe_club_id: document.getElementById("inputCafeClubId").value.trim(),
         cafe_member_key: document.getElementById("inputCafeMemberKey").value.trim(),
         custom_webhook_url: document.getElementById("inputCustomWebhook").value.trim(),
+        mention_text: document.getElementById("inputMentionText").value.trim(),
         notify_chzzk_open: document.getElementById("chkChzzkOpen").checked,
         notify_chzzk_title: document.getElementById("chkChzzkTitle").checked,
         notify_chzzk_category: document.getElementById("chkChzzkCategory").checked,

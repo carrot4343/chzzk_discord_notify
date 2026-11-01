@@ -132,9 +132,16 @@ def send_preview_for_streamer(
             live_url = f"https://chzzk.naver.com/live/{channel_id}"
             is_open = status == "OPEN"
 
+            mention_prefix = ""
+            if streamer.get("mention_role_id"):
+                mention_prefix = f"<@&{streamer['mention_role_id']}> "
+            elif streamer.get("mention_text"):
+                mt = streamer["mention_text"].strip()
+                mention_prefix = f"<@&{mt}> " if mt.isdigit() else f"{mt} "
+
             ok = send_discord_notification(
                 content=(
-                    f"🔴 **[실전 미리보기] {name}** 현재 방송 중입니다!"
+                    f"{mention_prefix}🔴 **[실전 미리보기] {name}** 현재 방송 중입니다!"
                     if is_open
                     else f"⚫ **[실전 미리보기] {name}** 현재 오프라인 상태입니다."
                 ),
@@ -562,6 +569,10 @@ def api_streamers_batch():
             "cafe_club_id": "",
             "cafe_member_key": "",
             "custom_webhook_url": "",
+            "mention_text": "",
+            "mention_role_id": "",
+            "mention_role_name": "",
+            "mention_on_open_only": True,
             "notify_chzzk_open": True,
             "notify_chzzk_close": False,
             "notify_chzzk_title": True,
@@ -650,6 +661,10 @@ def api_save_streamer():
         "cafe_club_id": cafe_club_id,
         "cafe_member_key": cafe_member_key,
         "custom_webhook_url": custom_webhook,
+        "mention_text": (body.get("mention_text") or "").strip(),
+        "mention_role_id": (body.get("mention_role_id") or "").strip(),
+        "mention_role_name": (body.get("mention_role_name") or "").strip(),
+        "mention_on_open_only": bool(body.get("mention_on_open_only", True)),
         "notify_chzzk_open": bool(body.get("notify_chzzk_open", True)),
         "notify_chzzk_title": bool(body.get("notify_chzzk_title", True)),
         "notify_chzzk_category": bool(body.get("notify_chzzk_category", True)),

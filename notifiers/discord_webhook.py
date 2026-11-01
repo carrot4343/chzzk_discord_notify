@@ -10,7 +10,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 import requests
 import config
-from utils.settings_manager import log_event
+from utils.settings_manager import load_settings, log_event
 
 # 플랫폼별 대표 색상 (16진수 색상 코드)
 COLOR_CHZZK_GREEN = 0x00FFA3      # 치지직 네온 그린

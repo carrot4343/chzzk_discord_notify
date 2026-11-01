@@ -4,6 +4,8 @@ settings.json
 state.json
 *.pem
 *.key
+logs/
+*.log
 
 # Python
 __pycache__/

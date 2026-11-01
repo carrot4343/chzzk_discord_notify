@@ -4,6 +4,7 @@
 """
 
 import re
+import threading
 import time
 from typing import Any, Optional
 import requests
@@ -20,6 +21,41 @@ CHZZK_ICON_URL = "https://ssl.pstatic.net/static/nng/glive/icon/favicon.png"
 # 동일 순찰 주기 내 여러 사용자가 같은 방송인을 등록했을 때 중복 API 호출을 막는 캐시 (유효시간 15초)
 _chzzk_detail_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_TTL_SECONDS = 15.0
+_MAX_CACHE_ENTRIES = 500
+_cache_lock = threading.Lock()
+
+
+def _prune_cache(cache: dict[str, tuple[float, Any]], ttl: float, max_entries: int = 500) -> None:
+    """만료되었거나 최대 크기를 초과한 오래된 캐시 엔트리를 자동 정리합니다."""
+    with _cache_lock:
+        now = time.time()
+        expired = [k for k, (ts, _) in list(cache.items()) if now - ts > ttl]
+        for k in expired:
+            cache.pop(k, None)
+        if len(cache) > max_entries:
+            sorted_keys = sorted(list(cache.keys()), key=lambda k: cache.get(k, (0.0, None))[0])
+            for k in sorted_keys[: len(cache) - max_entries]:
+                cache.pop(k, None)
+
+
+def _build_mention_prefix(streamer: dict[str, Any], is_stream_open: bool = False) -> str:
+    """방송인 설정에 지정된 멘션 접두사(<@&RoleID>, @everyone 등)를 반환합니다 (기본값: 멘션 없음)."""
+    mention_role_id = (streamer.get("mention_role_id") or "").strip()
+    mention_text = (streamer.get("mention_text") or "").strip()
+    if not mention_role_id and not mention_text:
+        return ""
+
+    open_only = bool(streamer.get("mention_on_open_only", True))
+    if open_only and not is_stream_open:
+        return ""  # 뱅온 전용 설정 시 방송 시작이 아니면 멘션하지 않음
+
+    if mention_role_id:
+        return f"<@&{mention_role_id}> "
+    if mention_text:
+        if mention_text.isdigit():
+            return f"<@&{mention_text}> "
+        return f"{mention_text} "
+    return ""
 
 
 def search_channel_id_by_name(streamer_name: str) -> Optional[str]:
@@ -109,6 +145,7 @@ def fetch_chzzk_live_detail(channel_id: str) -> Optional[dict[str, Any]]:
                 data = resp.json()
                 content = data.get("content")
                 if content is not None:
+                    _prune_cache(_chzzk_detail_cache, _CACHE_TTL_SECONDS, _MAX_CACHE_ENTRIES)
                     _chzzk_detail_cache[channel_id] = (now, content)
                     return content
         except Exception as e:
@@ -127,6 +164,7 @@ def fetch_chzzk_live_detail(channel_id: str) -> Optional[dict[str, Any]]:
             "liveImageUrl": None,
             "channel": ch,
         }
+        _prune_cache(_chzzk_detail_cache, _CACHE_TTL_SECONDS, _MAX_CACHE_ENTRIES)
         _chzzk_detail_cache[channel_id] = (now, fallback)
         return fallback
     except Exception as e:
@@ -202,6 +240,7 @@ def check_chzzk_for_streamer(
                 webhook_url,
                 global_cfg,
                 init_only=True,
+                streamer=streamer,
             )
         return True
 
@@ -223,8 +262,9 @@ def check_chzzk_for_streamer(
     if is_new_stream:
         log_event(f"[치지직 감지] 🔴 {channel_name} 방송 시작! ({curr_title})")
         if streamer.get("notify_chzzk_open", True):
+            mention_prefix = _build_mention_prefix(streamer, is_stream_open=True)
             send_discord_notification(
-                content=f"🔴 **{channel_name}** 치지직 방송이 시작되었습니다!",
+                content=f"{mention_prefix}🔴 **{channel_name}** 치지직 방송이 시작되었습니다!",
                 embed_title=curr_title or f"{channel_name} 라이브 방송",
                 embed_url=live_url,
                 embed_description=f"[👉 여기를 눌러 방송 보러가기]({live_url})",
@@ -248,8 +288,9 @@ def check_chzzk_for_streamer(
         if curr_title and curr_title != prev_title:
             log_event(f"[치지직 감지] 📝 {channel_name} 방제 변경: '{prev_title}' -> '{curr_title}'")
             if streamer.get("notify_chzzk_title", True):
+                mention_prefix = _build_mention_prefix(streamer, is_stream_open=False)
                 send_discord_notification(
-                    content=f"📝 **{channel_name}** 방송 제목이 변경되었습니다!",
+                    content=f"{mention_prefix}📝 **{channel_name}** 방송 제목이 변경되었습니다!",
                     embed_title=curr_title,
                     embed_url=live_url,
                     color=COLOR_CHZZK_GREEN,
@@ -273,8 +314,9 @@ def check_chzzk_for_streamer(
                 f"[치지직 감지] 🎮 {channel_name} 카테고리 변경: '{prev_category}' -> '{curr_category}'"
             )
             if streamer.get("notify_chzzk_category", True):
+                mention_prefix = _build_mention_prefix(streamer, is_stream_open=False)
                 send_discord_notification(
-                    content=f"🎮 **{channel_name}** 방송 카테고리가 변경되었습니다!",
+                    content=f"{mention_prefix}🎮 **{channel_name}** 방송 카테고리가 변경되었습니다!",
                     embed_title=curr_title or f"{channel_name} 라이브 방송",
                     embed_url=live_url,
                     color=COLOR_CHZZK_GREEN,
@@ -296,8 +338,9 @@ def check_chzzk_for_streamer(
     elif prev_status == "OPEN" and curr_status == "CLOSE":
         log_event(f"[치지직 감지] ⚫ {channel_name} 방송 종료")
         if streamer.get("notify_chzzk_close", False):
+            mention_prefix = _build_mention_prefix(streamer, is_stream_open=False)
             send_discord_notification(
-                content=f"⚫ **{channel_name}** 치지직 방송이 종료되었습니다.",
+                content=f"{mention_prefix}⚫ **{channel_name}** 치지직 방송이 종료되었습니다.",
                 embed_title=prev_title or f"{channel_name} 방송 종료",
                 embed_url=f"https://chzzk.naver.com/{channel_id}",
                 color=COLOR_CHZZK_OFFLINE,
@@ -333,6 +376,7 @@ def check_chzzk_for_streamer(
             webhook_url,
             global_cfg,
             init_only=False,
+            streamer=streamer,
         ):
             state_changed = True
 
@@ -347,6 +391,7 @@ def _check_chzzk_community(
     webhook_url: Optional[str],
     global_cfg: dict[str, Any],
     init_only: bool = False,
+    streamer: Optional[dict[str, Any]] = None,
 ) -> bool:
     """치지직 채널 커뮤니티에 방송인이 올린 새 게시글이 있는지 확인합니다."""
     url = (
@@ -421,8 +466,9 @@ def _check_chzzk_community(
             post_url = f"https://chzzk.naver.com/{channel_id}/community/detail/{pid}"
             log_event(f"[치지직 커뮤니티 감지] 📢 {channel_name} 새 글: {content_text[:30]}...")
 
+            mention_prefix = _build_mention_prefix(streamer or {}, is_stream_open=False)
             send_discord_notification(
-                content=f"📢 **{channel_name}** 치지직 커뮤니티에 새 글이 올라왔습니다!",
+                content=f"{mention_prefix}📢 **{channel_name}** 치지직 커뮤니티에 새 글이 올라왔습니다!",
                 embed_title=f"{channel_name} 치지직 커뮤니티 게시글",
                 embed_url=post_url,
                 embed_description=content_text,

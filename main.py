@@ -5,10 +5,13 @@
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
+from typing import Any, Optional
 import webbrowser
 
+from bot.discord_bot import start_discord_bot_background
 from collectors.chzzk import check_chzzk_for_streamer
 from collectors.naver_cafe import check_naver_cafe_for_streamer
 from utils.settings_manager import (
@@ -22,22 +25,43 @@ from web_ui import app, send_preview_for_streamer, set_check_now_callback
 _cycle_lock = threading.Lock()
 
 
+def _check_streamer_task(task: dict[str, Any]) -> tuple[bool, bool, Optional[str]]:
+    """개별 방송인의 치지직 및 네이버 카페 상태를 비동기 스레드 풀에서 확인합니다."""
+    streamer = task["streamer"]
+    st_state = task["st_state"]
+    g_cfg = task["g_cfg"]
+    st_name = task.get("name") or "방송인"
+    prev_img = streamer.get("profile_image_url")
+    state_changed = False
+    data_changed = False
+
+    try:
+        if check_chzzk_for_streamer(streamer, st_state, g_cfg):
+            state_changed = True
+        if streamer.get("profile_image_url") != prev_img:
+            data_changed = True
+        if check_naver_cafe_for_streamer(streamer, st_state, g_cfg):
+            state_changed = True
+        return state_changed, data_changed, None
+    except Exception as exc:
+        return state_changed, data_changed, f"'{st_name}' 점검 중 오류: {exc}"
+
+
 def run_all_streamers_cycle() -> None:
     """
-    등록된 모든 사용자의 활성 방송인들을 순찰합니다.
-    (동일한 방송인을 여러 사용자가 등록했더라도 내부 캐시를 통해 1회만 API를 호출합니다.)
+    등록된 모든 사용자 및 디스코드 서버(Guild)의 활성 방송인들을 스레드 풀로 병렬 순찰합니다.
+    (동일한 방송인을 여러 곳에서 등록했더라도 내부 캐시를 통해 1회만 API를 호출합니다.)
     """
     with _cycle_lock:
         data = load_all_data()
         users = data.get("users") or {}
+        guilds = data.get("guilds") or {}
         state = load_state()
 
-        state_changed = False
-        data_changed = False
-        checked_count = 0
+        tasks: list[dict[str, Any]] = []
 
-        # 아직 웹 UI에서 가입한 계정이 없을 때는 초기 시드(legacy_seed)로 감시 동작 유지
-        if not users and data.get("legacy_seed"):
+        # 아직 웹 UI에서 가입한 계정이 없고 길드 등록도 없을 때는 초기 시드(legacy_seed)로 감시 동작 유지
+        if not users and not guilds and data.get("legacy_seed"):
             seed = data["legacy_seed"]
             g_cfg = seed.get("global") or {}
             for streamer in seed.get("streamers") or []:
@@ -45,11 +69,14 @@ def run_all_streamers_cycle() -> None:
                     continue
                 st_key = streamer.get("id") or "streamer_default_1"
                 st_state = get_streamer_state(state, st_key)
-                if check_chzzk_for_streamer(streamer, st_state, g_cfg):
-                    state_changed = True
-                if check_naver_cafe_for_streamer(streamer, st_state, g_cfg):
-                    state_changed = True
-                checked_count += 1
+                tasks.append(
+                    {
+                        "streamer": streamer,
+                        "st_state": st_state,
+                        "g_cfg": g_cfg,
+                        "name": streamer.get("name") or "기본 방송인",
+                    }
+                )
         else:
             for uname, u_obj in users.items():
                 g_cfg = u_obj.get("global") or {}
@@ -58,32 +85,93 @@ def run_all_streamers_cycle() -> None:
                     if not streamer.get("enabled", True):
                         continue
                     st_id = streamer.get("id") or "default"
-                    # 첫 번째 가입자가 기존 streamer_default_1 을 물려받은 경우 기존 state 그대로 유지
                     state_key = (
                         st_id
                         if st_id == "streamer_default_1" and len(users) == 1
                         else f"{uname}:{st_id}"
                     )
                     st_state = get_streamer_state(state, state_key)
-                    prev_img = streamer.get("profile_image_url")
+                    tasks.append(
+                        {
+                            "streamer": streamer,
+                            "st_state": st_state,
+                            "g_cfg": g_cfg,
+                            "name": f"{uname}:{streamer.get('name') or st_id}",
+                        }
+                    )
 
-                    if check_chzzk_for_streamer(streamer, st_state, g_cfg):
-                        state_changed = True
-                    if streamer.get("profile_image_url") != prev_img:
-                        data_changed = True
+            for gid, g_obj in guilds.items():
+                g_cfg = g_obj.get("global") or {}
+                streamers = g_obj.get("streamers") or []
+                for streamer in streamers:
+                    if not streamer.get("enabled", True):
+                        continue
+                    st_id = streamer.get("id") or "default"
+                    state_key = f"guild:{gid}:{st_id}"
+                    st_state = get_streamer_state(state, state_key)
+                    tasks.append(
+                        {
+                            "streamer": streamer,
+                            "st_state": st_state,
+                            "g_cfg": g_cfg,
+                            "name": f"guild({gid}):{streamer.get('name') or st_id}",
+                        }
+                    )
 
-                    if check_naver_cafe_for_streamer(streamer, st_state, g_cfg):
-                        state_changed = True
+        state_changed = False
+        data_changed = False
+        checked_count = 0
 
-                    checked_count += 1
+        if tasks:
+            # 병렬 실행 (최대 10개 작업자 스레드)
+            max_workers = min(10, max(1, len(tasks)))
+            if max_workers == 1:
+                st_chg, dt_chg, err = _check_streamer_task(tasks[0])
+                if err:
+                    log_event(f"[순찰 경고] {err}")
+                if st_chg:
+                    state_changed = True
+                if dt_chg:
+                    data_changed = True
+                checked_count = 1
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=max_workers, thread_name_prefix="poll-worker"
+                ) as executor:
+                    future_to_task = {
+                        executor.submit(_check_streamer_task, task): task for task in tasks
+                    }
+                    for future in as_completed(future_to_task):
+                        st_chg, dt_chg, err = future.result()
+                        if err:
+                            log_event(f"[순찰 경고] {err}")
+                        if st_chg:
+                            state_changed = True
+                        if dt_chg:
+                            data_changed = True
+                        checked_count += 1
 
         if state_changed:
             save_state(state)
         if data_changed:
-            save_all_data(data)
+            updated_imgs = {
+                t["streamer"].get("id"): t["streamer"].get("profile_image_url")
+                for t in tasks
+                if t["streamer"].get("id") and t["streamer"].get("profile_image_url")
+            }
+            fresh_data = load_all_data()
+            for u_obj in (fresh_data.get("users") or {}).values():
+                for st in u_obj.get("streamers") or []:
+                    if st.get("id") in updated_imgs:
+                        st["profile_image_url"] = updated_imgs[st["id"]]
+            for g_obj in (fresh_data.get("guilds") or {}).values():
+                for st in g_obj.get("streamers") or []:
+                    if st.get("id") in updated_imgs:
+                        st["profile_image_url"] = updated_imgs[st["id"]]
+            save_all_data(fresh_data)
 
         log_event(
-            f"[순찰 완료] 전체 사용자({len(users)}명)의 활성 알림 항목 총 {checked_count}건 점검 완료"
+            f"[순찰 완료] 웹 사용자({len(users)}명) · 디스코드 서버({len(guilds)}개)의 활성 알림 총 {checked_count}건 점검 완료 (병렬 처리)"
         )
 
 
@@ -160,10 +248,12 @@ def main() -> None:
 
     if args.no_ui:
         log_event("🚀 [콘솔 전용 모드] 다중 사용자 실시간 감시를 시작합니다.")
+        start_discord_bot_background(run_all_streamers_cycle)
         background_monitor_loop()
         return
 
     set_check_now_callback(run_all_streamers_cycle)
+    start_discord_bot_background(run_all_streamers_cycle)
 
     monitor_thread = threading.Thread(target=background_monitor_loop, daemon=True)
     monitor_thread.start()

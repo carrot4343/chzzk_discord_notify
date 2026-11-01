@@ -16,6 +16,7 @@ load_dotenv(BASE_DIR / ".env")
 # 1. 민감 정보 및 대상 식별자 (.env 파일에서 읽어옴)
 # ------------------------------------------------------------------------------
 DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+DISCORD_BOT_TOKEN: str = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 
 STREAMER_NAME: str = os.getenv("STREAMER_NAME", "방송인").strip()
 CHZZK_CHANNEL_ID: str = os.getenv("CHZZK_CHANNEL_ID", "").strip()
@@ -47,9 +48,14 @@ NOTIFY_CAFE_ARTICLE: bool = True         # 방송인이 작성한 새 카페 게
 NOTIFY_CAFE_COMMENT: bool = True         # 방송인이 작성한 새 카페 댓글 알림 받기
 
 # ------------------------------------------------------------------------------
-# 4. 내부 상태 저장 파일 경로 (중복 알림 방지용)
+# 4. 내부 상태 및 로그 파일 경로
 # ------------------------------------------------------------------------------
 STATE_FILE_PATH: Path = BASE_DIR / "state.json"
+LOGS_DIR: Path = BASE_DIR / "logs"
+LOG_FILE_PATH: Path = LOGS_DIR / "taemtaem.log"
+
+# 쿠키 대칭키 암호화 시드 (지정하지 않으면 settings.json의 고유 secret_key로 자동 파생)
+COOKIE_ENCRYPTION_KEY: str = os.getenv("COOKIE_ENCRYPTION_KEY", "").strip()
 
 # 공통 HTTP 요청 헤더 (일반 브라우저처럼 보이도록 설정)
 DEFAULT_HEADERS: dict[str, str] = {

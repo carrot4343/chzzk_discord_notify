@@ -6,6 +6,7 @@
 
 import html
 import re
+import threading
 import time
 from typing import Any, Optional
 from urllib.parse import unquote
@@ -24,9 +25,62 @@ NAVER_CAFE_ICON_URL = DEFAULT_PNG_ICON
 
 # 다중 사용자 중복 조회 방지용 캐시 (유효시간 15초)
 _CACHE_TTL_SECONDS = 15.0
+_MAX_CACHE_ENTRIES = 500
+_cache_lock = threading.Lock()
 _articles_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _comments_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _body_cache: dict[str, tuple[float, tuple[str, Optional[str]]]] = {}
+
+# 쿠키 만료 알림 쿨다운 (웹후크당 24시간 1회)
+_cookie_alert_timestamps: dict[str, float] = {}
+_COOKIE_ALERT_COOLDOWN = 86400.0
+
+
+def _prune_cache(cache: dict[str, tuple[float, Any]], ttl: float, max_entries: int = 500) -> None:
+    """만료되었거나 최대 크기를 초과한 오래된 캐시 엔트리를 자동 정리합니다."""
+    with _cache_lock:
+        now = time.time()
+        expired = [k for k, (ts, _) in list(cache.items()) if now - ts > ttl]
+        for k in expired:
+            cache.pop(k, None)
+        if len(cache) > max_entries:
+            sorted_keys = sorted(list(cache.keys()), key=lambda k: cache.get(k, (0.0, None))[0])
+            for k in sorted_keys[: len(cache) - max_entries]:
+                cache.pop(k, None)
+
+
+class NaverCookieExpiredError(Exception):
+    """네이버 로그인 쿠키(NID_AUT/NID_SES)가 만료되었거나 유효하지 않을 때 발생하는 예외입니다."""
+    pass
+
+
+def _handle_cookie_expired_alert(webhook_url: Optional[str], streamer_name: str) -> None:
+    """네이버 로그인 쿠키 만료 시 관리자/서버 웹후크로 경고 카드를 발송합니다 (24시간당 1회)."""
+    if not webhook_url:
+        return
+    now = time.time()
+    last_sent = _cookie_alert_timestamps.get(webhook_url, 0.0)
+    if now - last_sent < _COOKIE_ALERT_COOLDOWN:
+        return
+
+    _cookie_alert_timestamps[webhook_url] = now
+    log_event(
+        f"[네이버 카페 경고] '{streamer_name}' 카페 수집 중 쿠키 만료 감지 -> 디스코드 경고 전송"
+    )
+    send_discord_notification(
+        content="⚠️ **[네이버 로그인 쿠키 만료 경고]** 카페 알림 수집을 위한 네이버 쿠키가 만료되었습니다.",
+        embed_title="🔑 네이버 로그인 쿠키 갱신 필요",
+        embed_url="https://nid.naver.com/nidlogin.login",
+        embed_description=(
+            f"**{streamer_name}** 님의 카페 새 글 및 댓글을 확인하던 중 네이버 로그인 세션이 만료되었거나 유효하지 않음이 확인되었습니다.\n\n"
+            "• 회원 전용 카페 게시글이나 작성자 댓글 알림이 누락될 수 있습니다.\n"
+            "• 웹 대시보드 또는 디스코드 `/쿠키설정` 명령어를 통해 최신 `NID_AUT` / `NID_SES` 쿠키를 다시 등록해 주세요."
+        ),
+        color=0xF59E0B,
+        footer_text="네이버 카페 쿠키 상태 경고",
+        webhook_username="네이버 카페 상태 알리미",
+        webhook_url=webhook_url,
+    )
 
 
 def _build_cookies(
@@ -201,6 +255,7 @@ def fetch_article_body_summary(
             if len(body) > 400:
                 body = body[:400] + "..."
             res = (body, writer_img)
+            _prune_cache(_body_cache, _CACHE_TTL_SECONDS, _MAX_CACHE_ENTRIES)
             _body_cache[cache_key] = (now, res)
             return res
     except Exception:
@@ -220,6 +275,7 @@ def fetch_member_articles(
     if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
         return cached[1]
 
+    ck = cookies if cookies is not None else _build_cookies()
     url = "https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberNetworkArticleListV3"
     params = {
         "search.cafeId": club_id,
@@ -237,16 +293,24 @@ def fetch_member_articles(
             url,
             params=params,
             headers=headers,
-            cookies=cookies if cookies is not None else _build_cookies(),
+            cookies=ck,
             timeout=10,
         )
+        if resp.status_code in (401, 403):
+            if ck and (ck.get("NID_AUT") or ck.get("NID_SES")):
+                raise NaverCookieExpiredError(f"HTTP {resp.status_code}")
+            return []
+
         resp.raise_for_status()
         data = resp.json()
         result = (data.get("message") or {}).get("result") or {}
         items = result.get("articleList") or []
         if items:
+            _prune_cache(_articles_cache, _CACHE_TTL_SECONDS, _MAX_CACHE_ENTRIES)
             _articles_cache[cache_key] = (now, items)
         return items
+    except NaverCookieExpiredError:
+        raise
     except Exception as e:
         log_event(f"[네이버 카페 오류] 게시글 목록 조회 실패: {e}")
         return []
@@ -286,13 +350,19 @@ def fetch_member_comments(
         resp = requests.get(
             url, params=params, headers=headers, cookies=ck, timeout=10
         )
-        if resp.status_code == 200:
+        if resp.status_code in (401, 403):
+            if ck and (ck.get("NID_AUT") or ck.get("NID_SES")):
+                raise NaverCookieExpiredError(f"HTTP {resp.status_code}")
+        elif resp.status_code == 200:
             data = resp.json()
             result = (data.get("message") or {}).get("result") or {}
             comments = result.get("comments") or []
             if comments:
+                _prune_cache(_comments_cache, _CACHE_TTL_SECONDS, _MAX_CACHE_ENTRIES)
                 _comments_cache[cache_key] = (now, comments)
                 return comments
+    except NaverCookieExpiredError:
+        raise
     except Exception:
         pass
 
@@ -414,6 +484,27 @@ def _resolve_streamer_avatar(
     return DEFAULT_PNG_ICON
 
 
+def _build_cafe_mention_prefix(streamer: dict[str, Any], is_article: bool = False) -> str:
+    """카페 알림 멘션 접두사를 반환합니다 (기본값: 뱅온 전용이므로 빈 문자열, 단 카페 단독 등록자의 새 글은 호출)."""
+    mention_role_id = (streamer.get("mention_role_id") or "").strip()
+    mention_text = (streamer.get("mention_text") or "").strip()
+    if not mention_role_id and not mention_text:
+        return ""
+
+    has_chzzk = bool((streamer.get("chzzk_channel_id") or "").strip())
+    if streamer.get("mention_on_open_only", True):
+        if has_chzzk or not is_article:
+            return ""
+
+    if mention_role_id:
+        return f"<@&{mention_role_id}> "
+    if mention_text:
+        if mention_text.isdigit():
+            return f"<@&{mention_text}> "
+        return f"{mention_text} "
+    return ""
+
+
 def check_naver_cafe_for_streamer(
     streamer: dict[str, Any],
     streamer_state: dict[str, Any],
@@ -441,7 +532,12 @@ def check_naver_cafe_for_streamer(
 
     # 1. 작성 게시글 감지
     if streamer.get("notify_cafe_article", True):
-        articles = fetch_member_articles(club_id, member_key, cookies)
+        try:
+            articles = fetch_member_articles(club_id, member_key, cookies)
+        except NaverCookieExpiredError:
+            _handle_cookie_expired_alert(webhook_url, streamer_name)
+            return False
+
         if articles:
             max_article_id = max(
                 int(a.get("articleid") or a.get("articleId") or 0) for a in articles
@@ -500,8 +596,9 @@ def check_naver_cafe_for_streamer(
                     log_event(
                         f"[네이버 카페 감지] 📗 {nickname} 새 게시글: {subject} (#{art_id})"
                     )
+                    mention_prefix = _build_cafe_mention_prefix(streamer, is_article=True)
                     send_discord_notification(
-                        content=f"📗 **{nickname}**님이 네이버 카페에 새 게시글을 작성했습니다!",
+                        content=f"{mention_prefix}📗 **{nickname}**님이 네이버 카페에 새 게시글을 작성했습니다!",
                         embed_title=subject,
                         embed_url=article_url,
                         embed_description=desc,
@@ -524,7 +621,12 @@ def check_naver_cafe_for_streamer(
 
     # 2. 작성 댓글 감지
     if streamer.get("notify_cafe_comment", True):
-        comments = fetch_member_comments(club_id, member_key, cookies)
+        try:
+            comments = fetch_member_comments(club_id, member_key, cookies)
+        except NaverCookieExpiredError:
+            _handle_cookie_expired_alert(webhook_url, streamer_name)
+            return state_changed
+
         if comments:
             max_comment_id = max(_extract_comment_unique_id(c) for c in comments)
 
@@ -569,8 +671,9 @@ def check_naver_cafe_for_streamer(
                     log_event(
                         f"[네이버 카페 감지] 💬 {streamer_name} 새 댓글: {contents[:30]}..."
                     )
+                    mention_prefix = _build_cafe_mention_prefix(streamer)
                     send_discord_notification(
-                        content=f"💬 **{streamer_name}**님이 네이버 카페에 새 댓글을 남겼습니다!",
+                        content=f"{mention_prefix}💬 **{streamer_name}**님이 네이버 카페에 새 댓글을 남겼습니다!",
                         embed_title=f"원문: {parent_subject}",
                         embed_url=article_url,
                         embed_description=f"**댓글 내용:**\n{contents}",
@@ -589,5 +692,8 @@ def check_naver_cafe_for_streamer(
             cafe_state["comments_initialized"] = True
             cafe_state["last_comment_id"] = 0
             state_changed = True
+
+    if webhook_url in _cookie_alert_timestamps:
+        _cookie_alert_timestamps.pop(webhook_url, None)
 
     return state_changed

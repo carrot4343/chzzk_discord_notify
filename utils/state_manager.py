@@ -5,9 +5,13 @@ state.json 파일을 읽고 쓰는 다중 방송인 상태 관리자 모듈입�
 """
 
 import json
+import os
 from pathlib import Path
+import threading
 from typing import Any
 import config
+
+_state_lock = threading.RLock()
 
 
 def get_default_streamer_state() -> dict[str, Any]:
@@ -50,41 +54,52 @@ def get_streamer_state(state: dict[str, Any], streamer_id: str) -> dict[str, Any
 
 def load_state(state_path: Path = config.STATE_FILE_PATH) -> dict[str, Any]:
     """state.json 파일을 읽어옵니다. 구버전(단일 방송인) 형식이면 자동으로 변환합니다."""
-    if not state_path.exists():
-        return {"streamers": {}}
+    with _state_lock:
+        if not state_path.exists():
+            return {"streamers": {}}
 
-    try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
 
-        # 구버전 단일 방송인 state.json 마이그레이션
-        if "streamers" not in loaded and ("chzzk" in loaded or "naver_cafe" in loaded):
-            migrated = {
-                "streamers": {
-                    "streamer_default_1": {
-                        "chzzk": loaded.get(
-                            "chzzk", get_default_streamer_state()["chzzk"]
-                        ),
-                        "naver_cafe": loaded.get(
-                            "naver_cafe", get_default_streamer_state()["naver_cafe"]
-                        ),
+            # 구버전 단일 방송인 state.json 마이그레이션
+            if "streamers" not in loaded and ("chzzk" in loaded or "naver_cafe" in loaded):
+                migrated = {
+                    "streamers": {
+                        "streamer_default_1": {
+                            "chzzk": loaded.get(
+                                "chzzk", get_default_streamer_state()["chzzk"]
+                            ),
+                            "naver_cafe": loaded.get(
+                                "naver_cafe", get_default_streamer_state()["naver_cafe"]
+                            ),
+                        }
                     }
                 }
-            }
-            return migrated
+                return migrated
 
-        if "streamers" not in loaded or not isinstance(loaded["streamers"], dict):
-            loaded["streamers"] = {}
-        return loaded
-    except Exception as e:
-        print(f"[경고] state.json 로드 중 문제 발생, 새 상태로 시작합니다: {e}")
-        return {"streamers": {}}
+            if "streamers" not in loaded or not isinstance(loaded["streamers"], dict):
+                loaded["streamers"] = {}
+            return loaded
+        except Exception as e:
+            print(f"[경고] state.json 로드 중 문제 발생, 새 상태로 시작합니다: {e}")
+            return {"streamers": {}}
 
 
 def save_state(state: dict[str, Any], state_path: Path = config.STATE_FILE_PATH) -> None:
-    """변경된 상태를 state.json 파일에 저장합니다."""
-    try:
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[오류] state.json 저장 실패: {e}")
+    """변경된 상태를 임시 파일에 기록 후 원자적으로(Atomic) state.json에 교체 저장합니다."""
+    with _state_lock:
+        temp_path = state_path.with_name(f"{state_path.name}.{os.getpid()}.tmp")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, state_path)
+        except Exception as e:
+            print(f"[오류] state.json 저장 실패: {e}")
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
