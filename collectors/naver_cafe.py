@@ -580,7 +580,7 @@ def check_naver_cafe_for_streamer(
                     ).strip("\ufeff ")
                     avatar_url = _resolve_streamer_avatar(streamer, writer_img)
                     thumb = article.get("representImage") or avatar_url
-                    article_url = f"https://cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{art_id}"
+                    article_url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{art_id}"
 
                     desc = (
                         body_text
@@ -666,7 +666,7 @@ def check_naver_cafe_for_streamer(
                         streamer, comment.get("writerImageUrl")
                     )
                     sticker_url = comment.get("stickerImageUrl") or avatar_url
-                    article_url = f"https://cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{art_id}"
+                    article_url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{art_id}"
 
                     log_event(
                         f"[네이버 카페 감지] 💬 {streamer_name} 새 댓글: {contents[:30]}..."

@@ -4,6 +4,7 @@ settings.json
 state.json
 *.pem
 *.key
+*.pub
 logs/
 *.log
 

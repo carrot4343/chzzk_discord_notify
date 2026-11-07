@@ -192,7 +192,7 @@ def send_preview_for_streamer(
             menu_name = (
                 (latest.get("clubMenu") or {}).get("menuname") or ""
             ).strip("\ufeff ")
-            url = f"https://cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{art_id}"
+            url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{art_id}"
 
             ok = send_discord_notification(
                 content=f"📗 **[실전 미리보기] {nickname}**님의 최근 네이버 카페 게시글입니다!",
@@ -229,7 +229,7 @@ def send_preview_for_streamer(
                 streamer, latest_c.get("writerImageUrl")
             )
             sticker_url = latest_c.get("stickerImageUrl") or avatar_url
-            c_url = f"https://cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{c_art_id}"
+            c_url = f"https://cafe.naver.com/f-e/cafes/{club_id}/articles/{c_art_id}"
 
             ok = send_discord_notification(
                 content=f"💬 **[실전 미리보기] {streamer_name}**님의 최근 네이버 카페 댓글입니다!",
