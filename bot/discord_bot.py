@@ -296,7 +296,7 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
             f"• 연동 계정: [@{x_sname}](https://x.com/{x_sname})"
         )
     else:
-        x_desc = "미연동 (`/x연동` 명령어로 @아이디 또는 주소를 넣으면 즉시 연동됩니다)"
+        x_desc = "미연동 (`/트위터연동` 또는 `/x연동` 명령어로 @아이디 또는 주소를 넣으면 즉시 연동됩니다)"
     embed.add_field(name="🐦 X(구 트위터) 알림 항목", value=x_desc, inline=False)
 
     embed.set_footer(
@@ -306,7 +306,15 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
 
 
 class StreamerConfigView(discord.ui.View):
-    """버튼 클릭으로 특정 방송인의 치지직·카페·X 알림 옵션을 즉시 토글하는 인터랙티브 뷰입니다."""
+    """
+    버튼 클릭으로 특정 방송인의 치지직·카페·X 알림 옵션을 즉시 토글하고,
+    플랫폼별 현재 상태 및 최신 포스트를 단독 확인할 수 있는 인터랙티브 뷰입니다.
+    - Row 0: 📺 치지직 알림 스위치 (5개)
+    - Row 1: ☕ 네이버 카페 알림 스위치 (2개)
+    - Row 2: 🐦 X(트위터) 알림 스위치 (3개)
+    - Row 3: 🔍 플랫폼별 연동 상태 / 최신 글 즉시 확인 버튼 (3개)
+    - Row 4: ⚙️ 방송인 전체 알림 감시 마스터 스위치 (1개, 단독 줄 배치)
+    """
 
     def __init__(self, guild_id: str, guild_name: str, streamer_id: str) -> None:
         super().__init__(timeout=600)
@@ -327,26 +335,68 @@ class StreamerConfigView(discord.ui.View):
         if not st:
             return
 
+        has_chzzk = bool((st.get("chzzk_channel_id") or "").strip())
+        has_cafe = bool(st.get("cafe_club_id") and st.get("cafe_member_key"))
         has_x = bool((st.get("x_screen_name") or "").strip())
-        mapping = [
-            ("toggle_open", "notify_chzzk_open", True, "방송 시작"),
-            ("toggle_close", "notify_chzzk_close", False, "방송 종료"),
-            ("toggle_title", "notify_chzzk_title", True, "방제 변경"),
-            ("toggle_category", "notify_chzzk_category", True, "카테고리"),
-            ("toggle_community", "notify_chzzk_community", True, "커뮤니티"),
-            ("toggle_cafe_art", "notify_cafe_article", True, "카페 게시글"),
-            ("toggle_cafe_cmt", "notify_cafe_comment", True, "카페 댓글"),
-            ("toggle_enabled", "enabled", True, "전체 감시"),
-            ("toggle_x_post", "notify_x_post", True, "X 포스트"),
-            ("toggle_x_reply", "notify_x_reply", False, "X 답글"),
-            ("toggle_x_retweet", "notify_x_retweet", False, "X 리트윗"),
+
+        toggle_mapping = [
+            ("toggle_open", "notify_chzzk_open", True, "📺뱅온"),
+            ("toggle_close", "notify_chzzk_close", False, "📺뱅종"),
+            ("toggle_title", "notify_chzzk_title", True, "📺방제변경"),
+            ("toggle_category", "notify_chzzk_category", True, "📺카테고리"),
+            ("toggle_community", "notify_chzzk_community", True, "📺채널커뮤"),
+            ("toggle_cafe_art", "notify_cafe_article", True, "☕카페 게시글"),
+            ("toggle_cafe_cmt", "notify_cafe_comment", True, "☕카페 댓글"),
+            ("toggle_x_post", "notify_x_post", True, "🐦X 포스트"),
+            ("toggle_x_reply", "notify_x_reply", False, "🐦X 답글"),
+            ("toggle_x_retweet", "notify_x_retweet", False, "🐦X 리트윗"),
         ]
+
         for child in self.children:
             if not isinstance(child, discord.ui.Button):
                 continue
-            for cid, key, default_val, label_base in mapping:
+
+            # Row 4: 전체 알림 감시 마스터 스위치 (단독 처리)
+            if child.custom_id == "toggle_enabled":
+                is_enabled = bool(st.get("enabled", True))
+                child.style = (
+                    discord.ButtonStyle.success if is_enabled else discord.ButtonStyle.danger
+                )
+                child.label = (
+                    "🟢 전체 알림 감시 중 (ON)"
+                    if is_enabled
+                    else "⏸️ 전체 알림 일시정지 (OFF)"
+                )
+                continue
+
+            # Row 3: 플랫폼별 상태/최신글 확인 버튼 (토글과 완전히 분리)
+            if child.custom_id == "check_chzzk_status":
+                child.style = (
+                    discord.ButtonStyle.primary if has_chzzk else discord.ButtonStyle.secondary
+                )
+                child.label = "🔍 치지직 상태 확인"
+                continue
+            if child.custom_id == "check_cafe_latest":
+                child.style = (
+                    discord.ButtonStyle.primary if has_cafe else discord.ButtonStyle.secondary
+                )
+                child.label = "🔍 카페 최신글 확인"
+                continue
+            if child.custom_id == "check_x_latest":
+                child.style = (
+                    discord.ButtonStyle.primary if has_x else discord.ButtonStyle.secondary
+                )
+                child.label = "🔍 X 최신포스트 확인"
+                continue
+
+            # Row 0 ~ Row 2: 플랫폼별 개별 알림 토글 버튼
+            for cid, key, default_val, label_base in toggle_mapping:
                 if child.custom_id == cid:
-                    if key.startswith("notify_x_") and not has_x:
+                    if key.startswith("notify_chzzk_") and not has_chzzk:
+                        is_on = False
+                    elif key.startswith("notify_cafe_") and not has_cafe:
+                        is_on = False
+                    elif key.startswith("notify_x_") and not has_x:
                         is_on = False
                     else:
                         is_on = bool(st.get(key, default_val))
@@ -375,13 +425,27 @@ class StreamerConfigView(discord.ui.View):
             )
             return
 
+        target_ch = (
+            interaction.channel
+            if isinstance(interaction.channel, discord.TextChannel)
+            else None
+        )
+
+        # 아직 네이버 카페가 연동되지 않은 상태에서 카페 버튼을 누르면 즉시 카페 연동 모달을 띄움
+        if key.startswith("notify_cafe_") and not (
+            st.get("cafe_club_id") and st.get("cafe_member_key")
+        ):
+            modal = CafeLinkModal(
+                guild_id=self.guild_id,
+                guild_name=self.guild_name,
+                target_channel=target_ch,
+                existing_streamer=st,
+            )
+            await interaction.response.send_modal(modal)
+            return
+
         # 아직 X 계정이 연동되지 않은 상태에서 X 버튼을 누르면 즉시 X 연동 모달을 띄움
         if key.startswith("notify_x_") and not (st.get("x_screen_name") or "").strip():
-            target_ch = (
-                interaction.channel
-                if isinstance(interaction.channel, discord.TextChannel)
-                else None
-            )
             modal = XLinkModal(
                 guild_id=self.guild_id,
                 guild_name=self.guild_name,
@@ -401,65 +465,132 @@ class StreamerConfigView(discord.ui.View):
         embed = _build_streamer_config_embed(st, self.guild_name)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="방송 시작", custom_id="toggle_open", row=0)
+    async def _handle_platform_check(
+        self, interaction: discord.Interaction, platform: str
+    ) -> None:
+        """플랫폼별 연동 확인 버튼 클릭 시 현재 방송 상태 또는 최신 글을 조회하여 즉시 카드로 전송합니다."""
+        if not interaction.user.guild_permissions.manage_guild:  # type: ignore[union-attr]
+            await interaction.response.send_message(
+                "⚠️ `서버 관리하기` 권한이 있는 관리자만 실행할 수 있습니다.",
+                ephemeral=True,
+            )
+            return
+
+        g_data, st = self._get_streamer()
+        if not st:
+            await interaction.response.send_message(
+                "⚠️ 해당 방송인 정보를 찾을 수 없습니다 (이미 삭제되었을 수 있습니다).",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        ok, msg = await asyncio.to_thread(
+            send_preview_for_streamer,
+            st,
+            g_data.get("global") or {},
+            f"서버:{self.guild_name}",
+            platform,
+        )
+        await interaction.followup.send(msg if ok else f"⚠️ {msg}", ephemeral=True)
+
+    # Row 0: 📺 치지직 알림 스위치 (5개 한 줄 배치)
+    @discord.ui.button(label="📺뱅온", custom_id="toggle_open", row=0)
     async def btn_open(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._handle_toggle(interaction, "notify_chzzk_open", True)
 
-    @discord.ui.button(label="방송 종료", custom_id="toggle_close", row=0)
+    @discord.ui.button(label="📺뱅종", custom_id="toggle_close", row=0)
     async def btn_close(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._handle_toggle(interaction, "notify_chzzk_close", False)
 
-    @discord.ui.button(label="방제 변경", custom_id="toggle_title", row=0)
+    @discord.ui.button(label="📺방제변경", custom_id="toggle_title", row=0)
     async def btn_title(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self._handle_toggle(interaction, "notify_chzzk_title", True)
 
-    @discord.ui.button(label="카테고리", custom_id="toggle_category", row=1)
+    @discord.ui.button(label="📺카테고리", custom_id="toggle_category", row=0)
     async def btn_category(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_chzzk_category", True)
 
-    @discord.ui.button(label="커뮤니티", custom_id="toggle_community", row=1)
+    @discord.ui.button(label="📺채널커뮤", custom_id="toggle_community", row=0)
     async def btn_community(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_chzzk_community", True)
 
-    @discord.ui.button(label="카페 게시글", custom_id="toggle_cafe_art", row=2)
+    # Row 1: ☕ 네이버 카페 알림 스위치 (2개)
+    @discord.ui.button(label="☕카페 게시글", custom_id="toggle_cafe_art", row=1)
     async def btn_cafe_art(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_cafe_article", True)
 
-    @discord.ui.button(label="카페 댓글", custom_id="toggle_cafe_cmt", row=2)
+    @discord.ui.button(label="☕카페 댓글", custom_id="toggle_cafe_cmt", row=1)
     async def btn_cafe_cmt(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_cafe_comment", True)
 
-    @discord.ui.button(label="전체 감시", custom_id="toggle_enabled", row=2)
-    async def btn_enabled(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        await self._handle_toggle(interaction, "enabled", True)
-
-    @discord.ui.button(label="X 포스트", custom_id="toggle_x_post", row=3)
+    # Row 2: 🐦 X(트위터) 알림 스위치 (3개)
+    @discord.ui.button(label="🐦X 포스트", custom_id="toggle_x_post", row=2)
     async def btn_x_post(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_x_post", True)
 
-    @discord.ui.button(label="X 답글", custom_id="toggle_x_reply", row=3)
+    @discord.ui.button(label="🐦X 답글", custom_id="toggle_x_reply", row=2)
     async def btn_x_reply(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_x_reply", False)
 
-    @discord.ui.button(label="X 리트윗", custom_id="toggle_x_retweet", row=3)
+    @discord.ui.button(label="🐦X 리트윗", custom_id="toggle_x_retweet", row=2)
     async def btn_x_retweet(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "notify_x_retweet", False)
+
+    # Row 3: 🔍 플랫폼별 연동 상태 & 최신 글 확인 버튼 (3개)
+    @discord.ui.button(
+        label="🔍 치지직 상태 확인",
+        custom_id="check_chzzk_status",
+        style=discord.ButtonStyle.primary,
+        row=3,
+    )
+    async def btn_check_chzzk(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_platform_check(interaction, "chzzk")
+
+    @discord.ui.button(
+        label="🔍 카페 최신글 확인",
+        custom_id="check_cafe_latest",
+        style=discord.ButtonStyle.primary,
+        row=3,
+    )
+    async def btn_check_cafe(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_platform_check(interaction, "cafe")
+
+    @discord.ui.button(
+        label="🔍 X 최신포스트 확인",
+        custom_id="check_x_latest",
+        style=discord.ButtonStyle.primary,
+        row=3,
+    )
+    async def btn_check_x(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_platform_check(interaction, "x")
+
+    # Row 4: ⚙️ 방송인 전체 알림 감시 마스터 스위치 (단독 줄 배치 - Row 3 확인 버튼과 완전 분리)
+    @discord.ui.button(label="🟢 전체 알림 감시 중 (ON)", custom_id="toggle_enabled", row=4)
+    async def btn_enabled(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_toggle(interaction, "enabled", True)
 
 
 # ------------------------------------------------------------------------------
@@ -545,7 +676,7 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
         self,
         guild_id: str,
         guild_name: str,
-        target_channel: discord.TextChannel,
+        target_channel: Optional[discord.TextChannel],
         existing_streamer: Optional[dict[str, Any]] = None,
         initial_name: str = "",
     ) -> None:
@@ -583,18 +714,22 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
             )
             return
 
-        try:
-            webhook_url = await _ensure_channel_webhook(
-                self.target_channel, self.guild_id, self.guild_name
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                f"❌ 봇에게 {self.target_channel.mention} 채널의 **웹후크 관리하기(Manage Webhooks)** 권한이 없습니다."
-            )
-            return
-        except Exception as e:
-            await interaction.followup.send(f"❌ 채널 웹후크 생성 중 오류가 발생했습니다: `{e}`")
-            return
+        webhook_url = ""
+        if self.target_channel is not None:
+            try:
+                webhook_url = await _ensure_channel_webhook(
+                    self.target_channel, self.guild_id, self.guild_name
+                )
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    f"❌ 봇에게 {self.target_channel.mention} 채널의 **웹후크 관리하기(Manage Webhooks)** 권한이 없습니다."
+                )
+                return
+            except Exception as e:
+                await interaction.followup.send(f"❌ 채널 웹후크 생성 중 오류가 발생했습니다: `{e}`")
+                return
+        elif self.existing_streamer and self.existing_streamer.get("custom_webhook_url"):
+            webhook_url = str(self.existing_streamer.get("custom_webhook_url"))
 
         streamers: list[dict[str, Any]] = g_data.get("streamers") or []
         club_id = info["club_id"]
@@ -621,15 +756,19 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
                     target_st["profile_image_url"] = writer_img
             target_st["notify_cafe_article"] = True
             target_st["notify_cafe_comment"] = True
-            if not target_st.get("custom_webhook_url"):
+            if not target_st.get("custom_webhook_url") and webhook_url:
                 target_st["custom_webhook_url"] = webhook_url
-                target_st["discord_channel_id"] = str(self.target_channel.id)
-                target_st["discord_channel_name"] = f"#{self.target_channel.name}"
+                if self.target_channel is not None:
+                    target_st["discord_channel_id"] = str(self.target_channel.id)
+                    target_st["discord_channel_name"] = f"#{self.target_channel.name}"
             action_msg = (
                 f"☕ **{target_st['name']}** 방송인에 네이버 카페 알림(작성자: `{writer_nick}`)이 연동되었습니다!"
             )
         else:
             st_name = custom_name or writer_nick
+            ch_id_str = str(self.target_channel.id) if self.target_channel else ""
+            ch_name_str = f"#{self.target_channel.name}" if self.target_channel else "기본채널"
+            ch_mention_str = self.target_channel.mention if self.target_channel else "현재"
             target_st = {
                 "id": generate_streamer_id(),
                 "enabled": True,
@@ -646,8 +785,8 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
                 "x_user_id": "",
                 "x_profile_image_url": "",
                 "custom_webhook_url": webhook_url,
-                "discord_channel_id": str(self.target_channel.id),
-                "discord_channel_name": f"#{self.target_channel.name}",
+                "discord_channel_id": ch_id_str,
+                "discord_channel_name": ch_name_str,
                 "notify_chzzk_open": False,
                 "notify_chzzk_close": False,
                 "notify_chzzk_title": False,
@@ -665,7 +804,7 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
             streamers.append(target_st)
             action_msg = (
                 f"🎉 **{st_name}** 네이버 카페 단독 알림(작성자: `{writer_nick}`)이 "
-                f"{self.target_channel.mention} 채널에 등록되었습니다!"
+                f"{ch_mention_str} 채널에 등록되었습니다!"
             )
 
         save_guild_settings(self.guild_id, guild_name=self.guild_name, guild_streamers=streamers)
@@ -1510,18 +1649,7 @@ async def cmd_link_cafe(
     await interaction.response.send_modal(modal)
 
 
-@bot_client.tree.command(
-    name="x연동",
-    description="X(구 트위터) @아이디 또는 주소를 입력해 방송인에 X 알림을 연동하거나 X 단독 알림을 추가합니다.",
-)
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(
-    이름="기존 등록된 방송인에 연동하려면 선택하세요 (비워두면 X 단독 알림으로 새로 추가됩니다)",
-    채널="알림을 받을 디스코드 채널 (비워두면 현재 채널에 등록됩니다)",
-)
-@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
-async def cmd_link_x(
+async def _handle_link_x_command(
     interaction: discord.Interaction,
     이름: Optional[str] = None,
     채널: Optional[discord.TextChannel] = None,
@@ -1563,13 +1691,7 @@ async def cmd_link_x(
     await interaction.response.send_modal(modal)
 
 
-@bot_client.tree.command(
-    name="x쿠키설정",
-    description="X(구 트위터) 알림 수집을 위한 부계정 로그인 쿠키(auth_token, ct0)를 보안 창으로 등록합니다.",
-)
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-async def cmd_set_x_cookies(interaction: discord.Interaction) -> None:
+async def _handle_set_x_cookies_command(interaction: discord.Interaction) -> None:
     err = _verify_admin_interaction(interaction)
     if err:
         await interaction.response.send_message(err, ephemeral=True)
@@ -1587,6 +1709,64 @@ async def cmd_set_x_cookies(interaction: discord.Interaction) -> None:
         default_ct0=g_cfg.get("x_ct0", ""),
     )
     await interaction.response.send_modal(modal)
+
+
+@bot_client.tree.command(
+    name="x연동",
+    description="X(구 트위터) @아이디 또는 주소를 입력해 방송인에 X 알림을 연동하거나 X 단독 알림을 추가합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="기존 등록된 방송인에 연동하려면 선택하세요 (비워두면 X 단독 알림으로 새로 추가됩니다)",
+    채널="알림을 받을 디스코드 채널 (비워두면 현재 채널에 등록됩니다)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_link_x(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    채널: Optional[discord.TextChannel] = None,
+) -> None:
+    await _handle_link_x_command(interaction, 이름, 채널)
+
+
+@bot_client.tree.command(
+    name="트위터연동",
+    description="X(구 트위터) @아이디 또는 주소를 입력해 방송인에 X 알림을 연동하거나 X 단독 알림을 추가합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="기존 등록된 방송인에 연동하려면 선택하세요 (비워두면 X 단독 알림으로 새로 추가됩니다)",
+    채널="알림을 받을 디스코드 채널 (비워두면 현재 채널에 등록됩니다)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_link_twitter(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    채널: Optional[discord.TextChannel] = None,
+) -> None:
+    await _handle_link_x_command(interaction, 이름, 채널)
+
+
+@bot_client.tree.command(
+    name="x쿠키설정",
+    description="X(구 트위터) 알림 수집을 위한 부계정 로그인 쿠키(auth_token, ct0)를 보안 창으로 등록합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def cmd_set_x_cookies(interaction: discord.Interaction) -> None:
+    await _handle_set_x_cookies_command(interaction)
+
+
+@bot_client.tree.command(
+    name="트위터쿠키설정",
+    description="X(구 트위터) 알림 수집을 위한 부계정 로그인 쿠키(auth_token, ct0)를 보안 창으로 등록합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def cmd_set_twitter_cookies(interaction: discord.Interaction) -> None:
+    await _handle_set_x_cookies_command(interaction)
 
 
 @bot_client.tree.command(
@@ -1975,7 +2155,7 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         inline=False,
     )
     embed.add_field(
-        name="🐦 `/x연동 이름: [방송인(선택)] 채널: [#채널(선택)]`",
+        name="🐦 `/트위터연동` (또는 `/x연동`) `이름: [방송인(선택)] 채널: [#채널(선택)]`",
         value=(
             "모달 팝업창에 방송인의 X(트위터) `@아이디` 또는 프로필 주소를 입력해 포스트·답글·리트윗 알림을 연동합니다.\n"
             "기존 방송인에 X를 추가하거나 **X 단독 알림**으로 새로 등록할 수 있습니다."
@@ -1983,7 +2163,7 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         inline=False,
     )
     embed.add_field(
-        name="🔐 `/쿠키설정`  |  `/x쿠키설정`",
+        name="🔐 `/쿠키설정`  |  `/트위터쿠키설정` (또는 `/x쿠키설정`)",
         value=(
             "채팅방에 노출되지 않는 보안 팝업창(모달)으로 네이버 쿠키(`NID_AUT`, `NID_SES`) 또는 X 부계정 쿠키(`auth_token`, `ct0`)를 등록합니다."
         ),
@@ -1991,7 +2171,7 @@ async def cmd_help(interaction: discord.Interaction) -> None:
     )
     embed.add_field(
         name="📋 `/알림목록`  |  ⚙️ `/알림설정`  |  🗑️ `/알림삭제`",
-        value="등록된 방송인 목록을 보거나, 버튼으로 세부 항목(뱅온·방제·커뮤니티·카페·X 포스트/답글/리트윗)을 켜고 끄거나, 삭제합니다.",
+        value="등록된 방송인 목록을 보거나, 버튼으로 세부 항목(📺치지직·☕카페·🐦X)을 켜고 끄고 연동 상태/최신 글을 확인하거나, 삭제합니다.",
         inline=False,
     )
     embed.add_field(

@@ -101,11 +101,14 @@ def send_preview_for_streamer(
     streamer: dict[str, Any],
     global_cfg: dict[str, Any],
     username: Optional[str] = None,
+    platform: Optional[str] = None,
 ) -> tuple[bool, str]:
     """
-    특정 방송인의 현재 치지직 상태, 최신 카페 게시글, 최신 카페 댓글을
+    특정 방송인의 현재 치지직 상태, 최신 카페 게시글/댓글, 최신 X 포스트를
     해당 사용자의 디스코드 웹후크로 즉시 전송합니다.
+    platform 인자('chzzk', 'cafe', 'x', None/'all')로 특정 플랫폼만 단독 확인이 가능합니다.
     """
+    target_platform = (platform or "all").strip().lower()
     webhook_url = (
         streamer.get("custom_webhook_url")
         or global_cfg.get("discord_webhook_url")
@@ -119,10 +122,27 @@ def send_preview_for_streamer(
 
     sent_count = 0
     channel_id = (streamer.get("chzzk_channel_id") or "").strip()
+    club_id = (streamer.get("cafe_club_id") or "").strip()
+    member_key = (streamer.get("cafe_member_key") or "").strip()
+    x_screen_name = (streamer.get("x_screen_name") or "").strip()
+    x_user_id = (streamer.get("x_user_id") or "").strip()
     streamer_name = streamer.get("name") or "방송인"
 
+    if target_platform == "chzzk" and not channel_id:
+        return False, f"**{streamer_name}** 방송인은 아직 치지직 채널이 연동되어 있지 않습니다."
+    if target_platform == "cafe" and not (club_id and member_key):
+        return (
+            False,
+            f"**{streamer_name}** 방송인은 아직 네이버 카페가 연동되어 있지 않습니다. `/카페연동` 명령어나 `☕카페 게시글` 버튼을 눌러 연동해 주세요!",
+        )
+    if target_platform == "x" and not (x_screen_name or x_user_id):
+        return (
+            False,
+            f"**{streamer_name}** 방송인은 아직 X(트위터) 계정이 연동되어 있지 않습니다. `/트위터연동`(또는 `/x연동`) 명령어나 `🐦X 포스트` 버튼을 눌러 연동해 주세요!",
+        )
+
     # 1. 치지직 미리보기
-    if channel_id:
+    if target_platform in ("all", "chzzk") and channel_id:
         detail = fetch_chzzk_live_detail(channel_id)
         if detail:
             ch = detail.get("channel") or {}
@@ -176,11 +196,16 @@ def send_preview_for_streamer(
             )
             if ok:
                 sent_count += 1
+            if target_platform == "chzzk":
+                if ok:
+                    state_str = "🔴 방송 중 (LIVE)" if is_open else "⚫ 오프라인 (OFFLINE)"
+                    return True, f"✅ **{streamer_name}** 치지직 현재 상태(`{state_str}`) 카드를 채널로 전송했습니다!"
+                return False, f"**{streamer_name}** 치지직 상태 카드 전송에 실패했습니다."
+        elif target_platform == "chzzk":
+            return False, f"**{streamer_name}** 치지직 채널 정보를 불러오지 못했습니다."
 
     # 2. 네이버 카페 최신 게시글 & 댓글 미리보기
-    club_id = (streamer.get("cafe_club_id") or "").strip()
-    member_key = (streamer.get("cafe_member_key") or "").strip()
-    if club_id and member_key:
+    if target_platform in ("all", "cafe") and club_id and member_key:
         cookies = _build_cookies(
             global_cfg.get("naver_nid_aut"), global_cfg.get("naver_nid_ses")
         )
@@ -257,14 +282,27 @@ def send_preview_for_streamer(
             if ok:
                 sent_count += 1
 
+        if target_platform == "cafe":
+            if sent_count > 0:
+                return True, f"✅ **{streamer_name}** 네이버 카페 최신 글/댓글 확인 카드({sent_count}건)를 채널로 전송했습니다!"
+            return (
+                False,
+                f"**{streamer_name}**님의 네이버 카페 최신 글을 가져오지 못했습니다. 회원 전용 카페라면 `/쿠키설정`으로 네이버 쿠키(`NID_AUT`, `NID_SES`)를 확인해 주세요.",
+            )
+
     # 3. X(구 트위터) 최신 포스트 미리보기
-    x_screen_name = (streamer.get("x_screen_name") or "").strip()
-    x_user_id = (streamer.get("x_user_id") or "").strip()
-    if x_screen_name or x_user_id:
+    if target_platform in ("all", "x") and (x_screen_name or x_user_id):
         x_cookies = _build_x_cookies(
             global_cfg.get("x_auth_token"), global_cfg.get("x_ct0")
         )
-        if x_cookies:
+        if not x_cookies:
+            if target_platform == "x":
+                return (
+                    False,
+                    f"**{streamer_name}** (`@{x_screen_name}`) X 계정은 정상 연동되어 있으나, 포스트 조회를 위한 X 부계정 쿠키(`auth_token`, `ct0`)가 아직 설정되지 않았습니다.\n"
+                    "👉 `/트위터쿠키설정` (또는 `/x쿠키설정`) 명령어로 쿠키를 먼저 등록해 주세요!",
+                )
+        else:
             try:
                 if not x_user_id and x_screen_name:
                     x_info = extract_x_user_info(
@@ -315,8 +353,25 @@ def send_preview_for_streamer(
                         )
                         if ok:
                             sent_count += 1
+                        if target_platform == "x":
+                            if ok:
+                                return True, f"✅ **{streamer_name}** (`@{x_screen_name}`) 최신 X 포스트 확인 카드를 채널로 전송했습니다!"
+                            return False, f"**{streamer_name}** 최신 X 포스트 카드 전송에 실패했습니다."
+                    elif target_platform == "x":
+                        return (
+                            False,
+                            f"**{streamer_name}** (`@{x_screen_name}`) 계정의 최근 포스트를 찾지 못했습니다 (작성된 글이 없거나 비공개 계정일 수 있습니다).",
+                        )
+            except XCookieExpiredError:
+                if target_platform == "x":
+                    return (
+                        False,
+                        "❌ 등록된 X(트위터) 로그인 쿠키가 만료되었거나 유효하지 않습니다. `/트위터쿠키설정` (또는 `/x쿠키설정`) 명령어로 최신 쿠키를 다시 등록해 주세요!",
+                    )
             except Exception as e:
                 log_event(f"[미리보기 경고] {streamer_name} X 미리보기 조회 오류: {e}", username=username)
+                if target_platform == "x":
+                    return False, f"X 최신 포스트 조회 중 오류가 발생했습니다: `{e}`"
 
     log_event(
         f"[{username or '시스템'}] {streamer_name} 미리보기 카드 {sent_count}건 디스코드 발송 완료",

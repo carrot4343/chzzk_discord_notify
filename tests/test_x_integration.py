@@ -547,15 +547,20 @@ class TestXIntegrationSuite(unittest.TestCase):
             self.assertTrue(saved_st["notify_x_reply"])
 
     def test_10_discord_bot_slash_commands_and_config_view(self) -> None:
-        """[TC-10] 디스코드 슬래시 명령어(/x연동, /x쿠키설정) 및 StreamerConfigView X 토글 버튼 검증"""
+        """[TC-10] 디스코드 슬래시 명령어(/x연동, /트위터연동, /x쿠키설정, /트위터쿠키설정) 및 StreamerConfigView 5줄 버튼 배치·격리 검증"""
         cmd_names = {c.name for c in discord_bot.bot_client.tree.get_commands()}
         self.assertIn("x연동", cmd_names)
+        self.assertIn("트위터연동", cmd_names)
         self.assertIn("x쿠키설정", cmd_names)
+        self.assertIn("트위터쿠키설정", cmd_names)
 
         sample_st = {
             "id": "st_1",
             "enabled": True,
             "name": "탬탬버린",
+            "chzzk_channel_id": "a7e175625fdea5a7d98428302b7aa57f",
+            "cafe_club_id": "30688884",
+            "cafe_member_key": "member_key_1",
             "x_screen_name": "2chamcham2",
             "notify_x_post": True,
             "notify_x_reply": False,
@@ -579,9 +584,36 @@ class TestXIntegrationSuite(unittest.TestCase):
                     for child in view.children
                     if hasattr(child, "custom_id")
                 }
-                self.assertEqual(btn_labels.get("toggle_x_post"), "🟢 X 포스트")
-                self.assertEqual(btn_labels.get("toggle_x_reply"), "⚫ X 답글")
-                self.assertEqual(btn_labels.get("toggle_x_retweet"), "🟢 X 리트윗")
+                btn_rows = {
+                    child.custom_id: child.row
+                    for child in view.children
+                    if hasattr(child, "custom_id")
+                }
+                self.assertEqual(btn_labels.get("toggle_open"), "🟢 📺뱅온")
+                self.assertEqual(btn_labels.get("toggle_cafe_art"), "🟢 ☕카페 게시글")
+                self.assertEqual(btn_labels.get("toggle_x_post"), "🟢 🐦X 포스트")
+                self.assertEqual(btn_labels.get("toggle_x_reply"), "⚫ 🐦X 답글")
+                self.assertEqual(btn_labels.get("toggle_x_retweet"), "🟢 🐦X 리트윗")
+                self.assertEqual(btn_labels.get("check_chzzk_status"), "🔍 치지직 상태 확인")
+                self.assertEqual(btn_labels.get("check_cafe_latest"), "🔍 카페 최신글 확인")
+                self.assertEqual(btn_labels.get("check_x_latest"), "🔍 X 최신포스트 확인")
+                self.assertEqual(btn_labels.get("toggle_enabled"), "🟢 전체 알림 감시 중 (ON)")
+
+                # Row 3(확인 버튼)과 Row 4(전체 알림 감시 마스터 스위치)가 서로 다른 줄에 완전히 분리되어 있는지 검증
+                self.assertEqual(btn_rows.get("check_chzzk_status"), 3)
+                self.assertEqual(btn_rows.get("check_cafe_latest"), 3)
+                self.assertEqual(btn_rows.get("check_x_latest"), 3)
+                self.assertEqual(btn_rows.get("toggle_enabled"), 4)
+
+                # 전체 알림 감시 버튼(toggle_enabled) 클릭 시 send_preview_for_streamer가 절대 호출되지 않는지 검증
+                fake_inter = MagicMock()
+                fake_inter.user.guild_permissions.manage_guild = True
+                fake_inter.response.edit_message = unittest.mock.AsyncMock()
+                with patch("bot.discord_bot.save_guild_settings"), \
+                     patch("bot.discord_bot.send_preview_for_streamer") as mock_preview:
+                    await view.btn_enabled.callback(fake_inter)
+                    mock_preview.assert_not_called()
+                    self.assertFalse(sample_st["enabled"])
 
             # X 미연동 방송인의 경우 notify_x_post가 True로 남아있더라도 버튼은 꺼짐(⚫)으로 표시되어야 함
             unlinked_st = {
@@ -601,7 +633,7 @@ class TestXIntegrationSuite(unittest.TestCase):
                     for child in view_unlinked.children
                     if hasattr(child, "custom_id")
                 }
-                self.assertEqual(unlinked_labels.get("toggle_x_post"), "⚫ X 포스트")
+                self.assertEqual(unlinked_labels.get("toggle_x_post"), "⚫ 🐦X 포스트")
 
         asyncio.run(_verify_view())
 
