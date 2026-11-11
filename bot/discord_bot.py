@@ -18,6 +18,11 @@ import requests
 import config
 from collectors.chzzk import CHZZK_ICON_URL, extract_chzzk_channel_info
 from collectors.naver_cafe import _build_cookies, extract_cafe_info_from_url
+from collectors.twitter_x import (
+    XCookieExpiredError,
+    extract_x_user_info,
+    parse_x_screen_name,
+)
 from utils.settings_manager import (
     generate_streamer_id,
     load_guild_settings,
@@ -174,6 +179,18 @@ def _format_streamer_status_lines(st: dict[str, Any]) -> str:
     else:
         cafe_str = "미연동"
 
+    x_flags = []
+    if st.get("x_screen_name"):
+        if st.get("notify_x_post", True):
+            x_flags.append("포스트")
+        if st.get("notify_x_reply", False):
+            x_flags.append("답글")
+        if st.get("notify_x_retweet", False):
+            x_flags.append("리트윗")
+        x_str = f"@{st['x_screen_name']} ({', '.join(x_flags) if x_flags else '꺼짐'})"
+    else:
+        x_str = "미연동"
+
     mention_str = ""
     if st.get("mention_role_id"):
         mention_str = f" | 🔔 <@&{st['mention_role_id']}>"
@@ -182,7 +199,7 @@ def _format_streamer_status_lines(st: dict[str, Any]) -> str:
 
     return (
         f"**{state_badge}** | 알림 채널: {ch_mention}{mention_str}\n"
-        f"• 치지직: `{chzzk_str}` | 네이버 카페: `{cafe_str}`"
+        f"• 치지직: `{chzzk_str}` | 네이버 카페: `{cafe_str}` | X: `{x_str}`"
     )
 
 
@@ -192,7 +209,13 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
     color = 0x00FFA3 if enabled else 0x71717A
     name = st.get("name", "방송인")
     cid = st.get("chzzk_channel_id", "")
-    url = f"https://chzzk.naver.com/{cid}" if cid else None
+    x_sname = (st.get("x_screen_name") or "").strip()
+    if cid:
+        url = f"https://chzzk.naver.com/{cid}"
+    elif x_sname:
+        url = f"https://x.com/{x_sname}"
+    else:
+        url = None
 
     embed = discord.Embed(
         title=f"⚙️ {name} 알림 상세 설정",
@@ -200,7 +223,12 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
         description=f"**{guild_name}** 서버의 알림 설정입니다. 아래 버튼을 눌러 실시간으로 켜고 끌 수 있습니다.",
         color=color,
     )
-    img = st.get("profile_image_url") or st.get("cafe_profile_image_url") or CHZZK_ICON_URL
+    img = (
+        st.get("profile_image_url")
+        or st.get("cafe_profile_image_url")
+        or st.get("x_profile_image_url")
+        or CHZZK_ICON_URL
+    )
     if img and img.startswith("http"):
         embed.set_thumbnail(url=img)
 
@@ -245,7 +273,7 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
             f"• 커뮤니티 새 글: **{_onoff(st.get('notify_chzzk_community', True))}**"
         )
     else:
-        chzzk_desc = "미연동 (네이버 카페 단독 알림)"
+        chzzk_desc = "미연동 (외부 플랫폼 단독 알림)"
     embed.add_field(name="📺 치지직 알림 항목", value=chzzk_desc, inline=False)
 
     has_cafe = bool(st.get("cafe_club_id") and st.get("cafe_member_key"))
@@ -258,12 +286,26 @@ def _build_streamer_config_embed(st: dict[str, Any], guild_name: str) -> discord
     else:
         cafe_desc = "미연동 (`/카페연동` 명령어로 게시글 주소 1개만 넣으면 즉시 연동됩니다)"
     embed.add_field(name="☕ 네이버 카페 알림 항목", value=cafe_desc, inline=False)
-    embed.set_footer(text=f"고유 ID: {st.get('id')} | 치지직 ID: {cid or '없음'}")
+
+    if x_sname:
+        x_desc = (
+            f"• X 새 포스트: **{_onoff(st.get('notify_x_post', True))}**\n"
+            f"• X 새 답글(Reply): **{_onoff(st.get('notify_x_reply', False))}**\n"
+            f"• X 리트윗(RT): **{_onoff(st.get('notify_x_retweet', False))}**\n"
+            f"• 연동 계정: [@{x_sname}](https://x.com/{x_sname})"
+        )
+    else:
+        x_desc = "미연동 (`/x연동` 명령어로 @아이디 또는 주소를 넣으면 즉시 연동됩니다)"
+    embed.add_field(name="🐦 X(구 트위터) 알림 항목", value=x_desc, inline=False)
+
+    embed.set_footer(
+        text=f"고유 ID: {st.get('id')} | 치지직 ID: {cid or '없음'} | X: @{x_sname if x_sname else '없음'}"
+    )
     return embed
 
 
 class StreamerConfigView(discord.ui.View):
-    """버튼 클릭으로 특정 방송인의 치지직·카페 알림 옵션을 즉시 토글하는 인터랙티브 뷰입니다."""
+    """버튼 클릭으로 특정 방송인의 치지직·카페·X 알림 옵션을 즉시 토글하는 인터랙티브 뷰입니다."""
 
     def __init__(self, guild_id: str, guild_name: str, streamer_id: str) -> None:
         super().__init__(timeout=600)
@@ -293,6 +335,9 @@ class StreamerConfigView(discord.ui.View):
             ("toggle_cafe_art", "notify_cafe_article", True, "카페 게시글"),
             ("toggle_cafe_cmt", "notify_cafe_comment", True, "카페 댓글"),
             ("toggle_enabled", "enabled", True, "전체 감시"),
+            ("toggle_x_post", "notify_x_post", True, "X 포스트"),
+            ("toggle_x_reply", "notify_x_reply", False, "X 답글"),
+            ("toggle_x_retweet", "notify_x_retweet", False, "X 리트윗"),
         ]
         for child in self.children:
             if not isinstance(child, discord.ui.Button):
@@ -376,6 +421,24 @@ class StreamerConfigView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         await self._handle_toggle(interaction, "enabled", True)
+
+    @discord.ui.button(label="X 포스트", custom_id="toggle_x_post", row=3)
+    async def btn_x_post(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_toggle(interaction, "notify_x_post", True)
+
+    @discord.ui.button(label="X 답글", custom_id="toggle_x_reply", row=3)
+    async def btn_x_reply(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_toggle(interaction, "notify_x_reply", False)
+
+    @discord.ui.button(label="X 리트윗", custom_id="toggle_x_retweet", row=3)
+    async def btn_x_retweet(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await self._handle_toggle(interaction, "notify_x_retweet", False)
 
 
 # ------------------------------------------------------------------------------
@@ -557,6 +620,10 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
                 "cafe_article_url": article_url,
                 "cafe_club_id": club_id,
                 "cafe_member_key": member_key,
+                "x_input": "",
+                "x_screen_name": "",
+                "x_user_id": "",
+                "x_profile_image_url": "",
                 "custom_webhook_url": webhook_url,
                 "discord_channel_id": str(self.target_channel.id),
                 "discord_channel_name": f"#{self.target_channel.name}",
@@ -567,6 +634,9 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
                 "notify_chzzk_community": False,
                 "notify_cafe_article": True,
                 "notify_cafe_comment": True,
+                "notify_x_post": False,
+                "notify_x_reply": False,
+                "notify_x_retweet": False,
                 "mention_role_id": "",
                 "mention_role_name": "",
                 "mention_on_open_only": True,
@@ -580,6 +650,259 @@ class CafeLinkModal(discord.ui.Modal, title="☕ 네이버 카페 알림 연동"
         save_guild_settings(self.guild_id, guild_name=self.guild_name, guild_streamers=streamers)
         log_event(
             f"[디스코드 봇:{self.guild_name}] '{target_st['name']}' 카페 연동 완료 (club_id={club_id})"
+        )
+
+        embed = _build_streamer_config_embed(target_st, self.guild_name)
+        view = StreamerConfigView(self.guild_id, self.guild_name, target_st["id"])
+        await interaction.followup.send(content=action_msg, embed=embed, view=view)
+
+
+class XCookieModal(discord.ui.Modal, title="🔐 X(구 트위터) 부계정 쿠키 보안 설정"):
+    """채팅방에 노출되지 않는 보안 모달 창으로 X의 auth_token, ct0 쿠키를 입력받습니다."""
+
+    x_auth_token_input = discord.ui.TextInput(
+        label="X(트위터) 쿠키: auth_token",
+        style=discord.TextStyle.short,
+        placeholder="x.com 로그인 후 F12 -> Application -> Cookies 에서 복사한 auth_token",
+        required=True,
+        max_length=500,
+    )
+    x_ct0_input = discord.ui.TextInput(
+        label="X(트위터) 쿠키: ct0",
+        style=discord.TextStyle.paragraph,
+        placeholder="x.com 로그인 후 F12 -> Application -> Cookies 에서 복사한 ct0",
+        required=True,
+        max_length=1000,
+    )
+
+    def __init__(
+        self,
+        guild_id: str,
+        guild_name: str,
+        default_auth_token: str = "",
+        default_ct0: str = "",
+    ) -> None:
+        super().__init__()
+        self.guild_id = str(guild_id)
+        self.guild_name = guild_name
+        if default_auth_token:
+            self.x_auth_token_input.default = default_auth_token
+        if default_ct0:
+            self.x_ct0_input.default = default_ct0
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        auth_token = self.x_auth_token_input.value.strip()
+        ct0 = self.x_ct0_input.value.strip()
+
+        g_data = load_guild_settings(self.guild_id, self.guild_name)
+        g_cfg = g_data.get("global") or {}
+        g_cfg["x_auth_token"] = auth_token
+        g_cfg["x_ct0"] = ct0
+        save_guild_settings(self.guild_id, guild_name=self.guild_name, guild_global=g_cfg)
+
+        verified = False
+        err_detail = ""
+        try:
+            test_info = await asyncio.to_thread(
+                extract_x_user_info, "X", auth_token, ct0
+            )
+            verified = bool(test_info and test_info.get("user_id"))
+        except XCookieExpiredError as e:
+            err_detail = f"인증 거부됨 ({e})"
+        except Exception as e:
+            err_detail = str(e)
+
+        log_event(
+            f"[디스코드 봇:{self.guild_name}] X(트위터) 로그인 쿠키 업데이트 완료 (인증확인: {verified})"
+        )
+
+        if verified:
+            await interaction.followup.send(
+                "✅ **X(구 트위터) 부계정 쿠키가 안전하게 암호화 저장되었습니다!** (이 메시지는 관리자 본인에게만 보입니다)\n"
+                "• X GraphQL API 인증 연동이 정상 확인되었습니다.\n"
+                "• 이제 `/x연동` 명령어로 기존 방송인에 X를 연결하거나 X 단독 알림을 등록하실 수 있습니다!",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"⚠️ 쿠키는 저장되었으나 X 계정 조회 테스트에서 확인되지 않았습니다.{f' (`{err_detail}`)' if err_detail else ''}\n"
+                "• `auth_token`과 `ct0` 값을 정확히 복사했는지 확인해 주세요.",
+                ephemeral=True,
+            )
+
+
+class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
+    """방송인의 X 아이디(@핸들) 또는 프로필/포스트 주소를 입력받아 자동 연동합니다."""
+
+    x_handle_input = discord.ui.TextInput(
+        label="X(트위터) @아이디 또는 프로필/포스트 URL",
+        style=discord.TextStyle.short,
+        placeholder="예: @2chamcham2 또는 https://x.com/2chamcham2",
+        required=True,
+        max_length=300,
+    )
+    custom_name_input = discord.ui.TextInput(
+        label="방송인 표시 이름 (선택 - 비워두면 자동 설정)",
+        style=discord.TextStyle.short,
+        placeholder="비워두면 기존 이름 또는 X 프로필 닉네임이 사용됩니다",
+        required=False,
+        max_length=100,
+    )
+
+    def __init__(
+        self,
+        guild_id: str,
+        guild_name: str,
+        target_channel: discord.TextChannel,
+        existing_streamer: Optional[dict[str, Any]] = None,
+        initial_name: str = "",
+    ) -> None:
+        super().__init__()
+        self.guild_id = str(guild_id)
+        self.guild_name = guild_name
+        self.target_channel = target_channel
+        self.existing_streamer = existing_streamer
+        if existing_streamer:
+            self.custom_name_input.default = existing_streamer.get("name", "")
+            if existing_streamer.get("x_screen_name"):
+                self.x_handle_input.default = f"@{existing_streamer.get('x_screen_name')}"
+        elif initial_name:
+            self.custom_name_input.default = initial_name
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=False)
+
+        raw_x = self.x_handle_input.value.strip()
+        custom_name = self.custom_name_input.value.strip()
+
+        parsed_handle = parse_x_screen_name(raw_x)
+        if not parsed_handle:
+            await interaction.followup.send(
+                "❌ **유효한 X(트위터) 아이디 또는 주소 형식이 아닙니다.**\n"
+                "예: `@아이디`, `아이디`, 또는 `https://x.com/아이디` 형태로 입력해 주세요."
+            )
+            return
+
+        g_data = load_guild_settings(self.guild_id, self.guild_name)
+        g_cfg = g_data.get("global") or {}
+        x_auth_token = (g_cfg.get("x_auth_token") or config.X_AUTH_TOKEN or "").strip() or None
+        x_ct0 = (g_cfg.get("x_ct0") or config.X_CT0 or "").strip() or None
+
+        if not x_auth_token or not x_ct0:
+            await interaction.followup.send(
+                "⚠️ **X(트위터) 부계정 로그인 쿠키(`auth_token`, `ct0`)가 아직 설정되지 않았습니다.**\n"
+                "먼저 `/x쿠키설정` 명령어(또는 웹 대시보드 상단 설정)에서 X 부계정 쿠키를 등록한 뒤 다시 시도해 주세요!"
+            )
+            return
+
+        try:
+            info = await asyncio.to_thread(
+                extract_x_user_info, raw_x, x_auth_token, x_ct0
+            )
+        except XCookieExpiredError:
+            await interaction.followup.send(
+                "❌ **X(트위터) 로그인 쿠키가 만료되었거나 유효하지 않습니다.**\n"
+                "`/x쿠키설정` 명령어로 최신 `auth_token`과 `ct0` 쿠키를 다시 등록해 주세요."
+            )
+            return
+
+        if not info:
+            await interaction.followup.send(
+                f"❌ **X에서 `@{parsed_handle}` 계정을 찾지 못했습니다.**\n"
+                "아이디 철자가 정확한지, 또는 정지/비공개 계정인지 확인해 주세요."
+            )
+            return
+
+        try:
+            webhook_url = await _ensure_channel_webhook(
+                self.target_channel, self.guild_id, self.guild_name
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                f"❌ 봇에게 {self.target_channel.mention} 채널의 **웹후크 관리하기(Manage Webhooks)** 권한이 없습니다."
+            )
+            return
+        except Exception as e:
+            await interaction.followup.send(f"❌ 채널 웹후크 생성 중 오류가 발생했습니다: `{e}`")
+            return
+
+        streamers: list[dict[str, Any]] = g_data.get("streamers") or []
+        x_uid = info["user_id"]
+        x_sname = info["screen_name"]
+        x_nick = info.get("name") or x_sname
+        x_img = info.get("profile_image_url") or CHZZK_ICON_URL
+
+        target_st = None
+        if self.existing_streamer:
+            target_st = next(
+                (s for s in streamers if s.get("id") == self.existing_streamer.get("id")),
+                None,
+            )
+
+        if target_st:
+            if custom_name:
+                target_st["name"] = custom_name
+            target_st["x_input"] = raw_x
+            target_st["x_screen_name"] = x_sname
+            target_st["x_user_id"] = x_uid
+            if x_img:
+                target_st["x_profile_image_url"] = x_img
+                if not target_st.get("profile_image_url"):
+                    target_st["profile_image_url"] = x_img
+            target_st["notify_x_post"] = True
+            target_st.setdefault("notify_x_reply", False)
+            target_st.setdefault("notify_x_retweet", False)
+            if not target_st.get("custom_webhook_url"):
+                target_st["custom_webhook_url"] = webhook_url
+                target_st["discord_channel_id"] = str(self.target_channel.id)
+                target_st["discord_channel_name"] = f"#{self.target_channel.name}"
+            action_msg = (
+                f"🐦 **{target_st['name']}** 방송인에 X(트위터) 알림(`@{x_sname}`)이 연동되었습니다!"
+            )
+        else:
+            st_name = custom_name or x_nick
+            target_st = {
+                "id": generate_streamer_id(),
+                "enabled": True,
+                "name": st_name,
+                "profile_image_url": x_img,
+                "cafe_profile_image_url": "",
+                "chzzk_input": "",
+                "chzzk_channel_id": "",
+                "cafe_article_url": "",
+                "cafe_club_id": "",
+                "cafe_member_key": "",
+                "x_input": raw_x,
+                "x_screen_name": x_sname,
+                "x_user_id": x_uid,
+                "x_profile_image_url": x_img,
+                "custom_webhook_url": webhook_url,
+                "discord_channel_id": str(self.target_channel.id),
+                "discord_channel_name": f"#{self.target_channel.name}",
+                "notify_chzzk_open": False,
+                "notify_chzzk_close": False,
+                "notify_chzzk_title": False,
+                "notify_chzzk_category": False,
+                "notify_chzzk_community": False,
+                "notify_cafe_article": False,
+                "notify_cafe_comment": False,
+                "notify_x_post": True,
+                "notify_x_reply": False,
+                "notify_x_retweet": False,
+                "mention_role_id": "",
+                "mention_role_name": "",
+                "mention_on_open_only": True,
+            }
+            streamers.append(target_st)
+            action_msg = (
+                f"🎉 **{st_name}** (`@{x_sname}`) X(트위터) 단독 알림이 "
+                f"{self.target_channel.mention} 채널에 등록되었습니다!"
+            )
+
+        save_guild_settings(self.guild_id, guild_name=self.guild_name, guild_streamers=streamers)
+        log_event(
+            f"[디스코드 봇:{self.guild_name}] '{target_st['name']}' X 연동 완료 (@{x_sname}, id={x_uid})"
         )
 
         embed = _build_streamer_config_embed(target_st, self.guild_name)
@@ -745,6 +1068,10 @@ class FollowImportView(discord.ui.View):
                     "cafe_article_url": "",
                     "cafe_club_id": "",
                     "cafe_member_key": "",
+                    "x_input": "",
+                    "x_screen_name": "",
+                    "x_user_id": "",
+                    "x_profile_image_url": "",
                     "custom_webhook_url": self.webhook_url,
                     "discord_channel_id": str(self.target_channel.id),
                     "discord_channel_name": f"#{self.target_channel.name}",
@@ -755,6 +1082,9 @@ class FollowImportView(discord.ui.View):
                     "notify_chzzk_community": True,
                     "notify_cafe_article": False,
                     "notify_cafe_comment": False,
+                    "notify_x_post": False,
+                    "notify_x_reply": False,
+                    "notify_x_retweet": False,
                     "mention_role_id": "",
                     "mention_role_name": "",
                     "mention_on_open_only": True,
@@ -1040,6 +1370,10 @@ async def cmd_add_streamer(
             "cafe_article_url": "",
             "cafe_club_id": "",
             "cafe_member_key": "",
+            "x_input": "",
+            "x_screen_name": "",
+            "x_user_id": "",
+            "x_profile_image_url": "",
             "custom_webhook_url": webhook_url,
             "discord_channel_id": str(target_channel.id),
             "discord_channel_name": f"#{target_channel.name}",
@@ -1050,6 +1384,9 @@ async def cmd_add_streamer(
             "notify_chzzk_community": True,
             "notify_cafe_article": False,
             "notify_cafe_comment": False,
+            "notify_x_post": False,
+            "notify_x_reply": False,
+            "notify_x_retweet": False,
             "mention_role_id": str(멘션역할.id) if 멘션역할 else "",
             "mention_role_name": f"@{멘션역할.name}" if 멘션역할 else "",
             "mention_on_open_only": True,
@@ -1116,6 +1453,85 @@ async def cmd_link_cafe(
         target_channel=target_channel,
         existing_streamer=existing,
         initial_name=(이름.strip() if 이름 and not existing else ""),
+    )
+    await interaction.response.send_modal(modal)
+
+
+@bot_client.tree.command(
+    name="x연동",
+    description="X(구 트위터) @아이디 또는 주소를 입력해 방송인에 X 알림을 연동하거나 X 단독 알림을 추가합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="기존 등록된 방송인에 연동하려면 선택하세요 (비워두면 X 단독 알림으로 새로 추가됩니다)",
+    채널="알림을 받을 디스코드 채널 (비워두면 현재 채널에 등록됩니다)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_link_x(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    채널: Optional[discord.TextChannel] = None,
+) -> None:
+    err = _verify_admin_interaction(interaction)
+    if err:
+        await interaction.response.send_message(err, ephemeral=True)
+        return
+
+    target_channel = 채널 or (
+        interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
+    )
+    if not target_channel:
+        await interaction.response.send_message(
+            "⚠️ 일반 텍스트 채널에서 실행하거나 `채널` 옵션을 지정해 주세요.",
+            ephemeral=True,
+        )
+        return
+
+    guild_id = str(interaction.guild_id)
+    guild_name = interaction.guild.name if interaction.guild else guild_id
+    g_data = load_guild_settings(guild_id, guild_name)
+    streamers = g_data.get("streamers") or []
+
+    existing = None
+    if 이름:
+        existing = next(
+            (s for s in streamers if s.get("id") == 이름 or s.get("name") == 이름.strip()),
+            None,
+        )
+
+    modal = XLinkModal(
+        guild_id=guild_id,
+        guild_name=guild_name,
+        target_channel=target_channel,
+        existing_streamer=existing,
+        initial_name=(이름.strip() if 이름 and not existing else ""),
+    )
+    await interaction.response.send_modal(modal)
+
+
+@bot_client.tree.command(
+    name="x쿠키설정",
+    description="X(구 트위터) 알림 수집을 위한 부계정 로그인 쿠키(auth_token, ct0)를 보안 창으로 등록합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+async def cmd_set_x_cookies(interaction: discord.Interaction) -> None:
+    err = _verify_admin_interaction(interaction)
+    if err:
+        await interaction.response.send_message(err, ephemeral=True)
+        return
+
+    guild_id = str(interaction.guild_id)
+    guild_name = interaction.guild.name if interaction.guild else guild_id
+    g_data = load_guild_settings(guild_id, guild_name)
+    g_cfg = g_data.get("global") or {}
+
+    modal = XCookieModal(
+        guild_id=guild_id,
+        guild_name=guild_name,
+        default_auth_token=g_cfg.get("x_auth_token", ""),
+        default_ct0=g_cfg.get("x_ct0", ""),
     )
     await interaction.response.send_modal(modal)
 
@@ -1506,15 +1922,23 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         inline=False,
     )
     embed.add_field(
-        name="🔐 `/쿠키설정`",
+        name="🐦 `/x연동 이름: [방송인(선택)] 채널: [#채널(선택)]`",
         value=(
-            "채팅방에 노출되지 않는 보안 팝업창(모달)으로 네이버 로그인 쿠키(`NID_AUT`, `NID_SES`)를 등록합니다."
+            "모달 팝업창에 방송인의 X(트위터) `@아이디` 또는 프로필 주소를 입력해 포스트·답글·리트윗 알림을 연동합니다.\n"
+            "기존 방송인에 X를 추가하거나 **X 단독 알림**으로 새로 등록할 수 있습니다."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🔐 `/쿠키설정`  |  `/x쿠키설정`",
+        value=(
+            "채팅방에 노출되지 않는 보안 팝업창(모달)으로 네이버 쿠키(`NID_AUT`, `NID_SES`) 또는 X 부계정 쿠키(`auth_token`, `ct0`)를 등록합니다."
         ),
         inline=False,
     )
     embed.add_field(
         name="📋 `/알림목록`  |  ⚙️ `/알림설정`  |  🗑️ `/알림삭제`",
-        value="등록된 방송인 목록을 보거나, 버튼으로 세부 항목(뱅온·방제·커뮤니티·카페글·댓글)을 켜고 끄거나, 삭제합니다.",
+        value="등록된 방송인 목록을 보거나, 버튼으로 세부 항목(뱅온·방제·커뮤니티·카페·X 포스트/답글/리트윗)을 켜고 끄거나, 삭제합니다.",
         inline=False,
     )
     embed.add_field(

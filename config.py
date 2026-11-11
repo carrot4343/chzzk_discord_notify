@@ -26,6 +26,10 @@ NAVER_CAFE_MEMBER_KEY: str = os.getenv("NAVER_CAFE_MEMBER_KEY", "").strip()
 NAVER_NID_AUT: str = os.getenv("NAVER_NID_AUT", "").strip()
 NAVER_NID_SES: str = os.getenv("NAVER_NID_SES", "").strip()
 
+# X(구 트위터) 조회용 부계정 로그인 쿠키 (선택)
+X_AUTH_TOKEN: str = os.getenv("X_AUTH_TOKEN", "").strip()
+X_CT0: str = os.getenv("X_CT0", "").strip()
+
 # ------------------------------------------------------------------------------
 # 2. 조회 주기 설정 (단위: 초)
 # 너무 짧게 설정하면 사이트에서 차단될 수 있으므로 기본값(30~60초) 유지를 권장합니다.
@@ -46,6 +50,14 @@ NOTIFY_CHZZK_COMMUNITY: bool = True      # 치지직 채널 커뮤니티 새 글
 # [네이버 카페 알림 옵션]
 NOTIFY_CAFE_ARTICLE: bool = True         # 방송인이 작성한 새 카페 게시글 알림 받기
 NOTIFY_CAFE_COMMENT: bool = True         # 방송인이 작성한 새 카페 댓글 알림 받기
+
+# [X(구 트위터) 알림 옵션] - X 계정이 연동된 방송인에게만 적용
+NOTIFY_X_POST: bool = True               # 새 포스트(일반 글·인용) 알림 받기
+NOTIFY_X_REPLY: bool = False             # 답글 알림 받기
+NOTIFY_X_RETWEET: bool = False           # 재게시(리트윗) 알림 받기
+
+# X는 봇 탐지 방지를 위해 치지직/카페보다 긴 계정별 최소 조회 간격(초)을 적용합니다.
+X_POLL_MIN_INTERVAL_SECONDS: int = 180
 
 # ------------------------------------------------------------------------------
 # 4. 내부 상태 및 로그 파일 경로

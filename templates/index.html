@@ -372,6 +372,12 @@
       border: 1px solid rgba(3, 199, 90, 0.35);
     }
 
+    .badge-x {
+      background: rgba(29, 161, 242, 0.14);
+      color: #38bdf8;
+      border: 1px solid rgba(29, 161, 242, 0.35);
+    }
+
     .badge-webhook {
       background: rgba(88, 101, 242, 0.15);
       color: #9ba5ff;
@@ -600,7 +606,7 @@
     <!-- 내 공통 설정 카드 -->
     <div class="card">
       <div class="card-header">
-        <div class="card-title">⚙️ 내 기본 설정 (디스코드 웹후크 & 네이버 쿠키)</div>
+        <div class="card-title">⚙️ 내 기본 설정 (디스코드 웹후크 & 네이버·X 쿠키)</div>
         <div style="display: flex; gap: 8px;">
           <button class="btn btn-discord btn-sm" onclick="testGlobalWebhook()">🔔 내 웹후크 테스트</button>
           <button class="btn btn-primary btn-sm" onclick="saveGlobalSettings()">💾 내 설정 저장</button>
@@ -634,19 +640,34 @@
 
         <div class="form-group">
           <label>
+            X(구 트위터) 부계정 쿠키: auth_token
+            <span class="hint">X 포스트·답글·리트윗 조회용 (부계정 권장)</span>
+          </label>
+          <input type="password" id="xAuthToken" placeholder="x.com 쿠키의 auth_token 값을 붙여넣으세요" />
+        </div>
+
+        <div class="form-group">
+          <label>
+            X(구 트위터) 부계정 쿠키: ct0
+            <span class="hint"><a href="#" onclick="toggleCookieVisibility(event)" style="color: #38bdf8;">👁️ 입력값 보기/숨기기</a></span>
+          </label>
+          <input type="password" id="xCt0" placeholder="x.com 쿠키의 ct0 값을 붙여넣으세요" />
+        </div>
+
+        <div class="form-group">
+          <label>
             서버 순찰 주기 (초)
-            <span class="hint">추천: 30초 ~ 60초</span>
+            <span class="hint">추천: 30초 ~ 60초 (X는 계정당 최소 3분 간격 자동 보호)</span>
           </label>
           <input type="number" id="pollInterval" min="15" max="600" value="60" />
         </div>
       </div>
 
       <details class="help-box">
-        <summary>💡 네이버 로그인 쿠키(NID_AUT, NID_SES) 1분 만에 찾는 방법 보기</summary>
+        <summary>💡 네이버(NID_AUT, NID_SES) 및 X(auth_token, ct0) 쿠키 1분 만에 찾는 방법 보기</summary>
         <ol style="margin-top: 8px; padding-left: 20px; line-height: 1.7;">
-          <li>크롬/엣지 브라우저에서 네이버에 로그인한 뒤 <a href="https://cafe.naver.com" target="_blank" style="color: var(--chzzk);">네이버 카페</a>에 접속합니다.</li>
-          <li>키보드 <b>F12</b>를 누르고 상단 메뉴의 <b>Application (애플리케이션)</b> 탭 → 왼쪽 <b>Cookies</b> → <code>https://cafe.naver.com</code>을 클릭합니다.</li>
-          <li>표에서 <b>NID_AUT</b>와 <b>NID_SES</b>의 Value(값)를 각각 복사해 위 칸에 붙여넣고 <b>[내 설정 저장]</b>을 누르면 끝납니다!</li>
+          <li><b>[네이버 쿠키]</b> 크롬/엣지에서 네이버 로그인 후 <a href="https://cafe.naver.com" target="_blank" style="color: var(--chzzk);">네이버 카페</a> 접속 → <b>F12</b> → <b>Application</b> → 왼쪽 <b>Cookies</b> → <code>https://cafe.naver.com</code> 클릭 → <b>NID_AUT</b>와 <b>NID_SES</b>의 Value를 복사해 붙여넣습니다.</li>
+          <li><b>[X(트위터) 쿠키]</b> 알림 수집용 <b>X 부계정</b>으로 <a href="https://x.com" target="_blank" style="color: #38bdf8;">https://x.com</a>에 로그인 → <b>F12</b> → <b>Application</b> → 왼쪽 <b>Cookies</b> → <code>https://x.com</code> 클릭 → <b>auth_token</b>과 <b>ct0</b>의 Value를 각각 복사해 위 칸에 붙여넣고 <b>[내 설정 저장]</b>을 누르면 끝납니다!</li>
         </ol>
       </details>
     </div>
@@ -672,7 +693,7 @@
       <input type="hidden" id="editStreamerId" />
 
       <div style="background: rgba(0, 255, 163, 0.08); border: 1px solid rgba(0, 255, 163, 0.25); border-radius: 8px; padding: 10px 14px; font-size: 0.83rem; color: #a7f3d0; margin-bottom: 16px;">
-        💡 <b>선택 안내:</b> 치지직 알림만 받기, 네이버 카페 알림만 받기, 둘 다 받기 모두 가능합니다. (둘 중 최소 1개만 입력하시면 됩니다)
+        💡 <b>선택 안내:</b> 치지직, 네이버 카페, X(구 트위터) 중 원하는 플랫폼만 단독으로 받거나 하나로 묶어 통합 관리할 수 있습니다. (최소 1개만 입력하시면 됩니다)
       </div>
 
       <div class="form-grid">
@@ -694,7 +715,7 @@
             <span class="hint">치지직 알림을 원치 않으면 비워두세요</span>
           </label>
           <div class="input-row">
-            <input type="text" id="inputChzzk" placeholder="치지직 주소, 32자리 코드, 또는 방송인 이름 (카페만 받을 경우 비워두기)" />
+            <input type="text" id="inputChzzk" placeholder="치지직 주소, 32자리 코드, 또는 방송인 이름 (카페/X만 받을 경우 비워두기)" />
             <button type="button" class="btn btn-secondary" onclick="previewChzzkLookup()">🔍 치지직 확인</button>
           </div>
           <div id="chzzkLookupResult" class="hint" style="color: var(--chzzk); margin-top: 2px;"></div>
@@ -702,18 +723,18 @@
 
         <div class="form-group">
           <label>방송인 표시 이름 <span class="hint">(자동 입력됨)</span></label>
-          <input type="text" id="inputName" placeholder="비워두면 치지직/카페 이름으로 자동 설정" />
+          <input type="text" id="inputName" placeholder="비워두면 치지직/카페/X 이름으로 자동 설정" />
         </div>
 
         <div class="form-group">
           <label>프로필 이미지 URL <span class="hint">(자동 입력됨)</span></label>
-          <input type="text" id="inputProfileImg" placeholder="비워두면 치지직/카페 프로필 사진 자동 사용" />
+          <input type="text" id="inputProfileImg" placeholder="비워두면 프로필 사진 자동 사용" />
         </div>
 
         <div class="form-group full">
           <label>
             ② 네이버 카페 대표 게시글 주소 1개 (선택)
-            <span class="hint">방송인이 쓴 아무 카페 글 주소를 넣으면 카페ID·멤버키가 자동 추출됩니다! (치지직만 받을 경우 비워두기)</span>
+            <span class="hint">방송인이 쓴 아무 카페 글 주소를 넣으면 카페ID·멤버키가 자동 추출됩니다!</span>
           </label>
           <div class="input-row">
             <input type="text" id="inputCafeUrl" placeholder="예: https://cafe.naver.com/2chamcham2/59153" />
@@ -734,7 +755,22 @@
 
         <div class="form-group full">
           <label>
-            ③ 개별 디스코드 웹후크 URL (선택)
+            ③ X (구 트위터) @아이디 또는 프로필 주소 (선택)
+            <span class="hint">방송인의 @아이디 또는 https://x.com/아이디 를 입력하면 X 알림이 연동됩니다!</span>
+          </label>
+          <div class="input-row">
+            <input type="text" id="inputX" placeholder="예: @2chamcham2 또는 https://x.com/2chamcham2" />
+            <button type="button" class="btn btn-secondary" onclick="previewXLookup()">🔍 X 계정 확인</button>
+          </div>
+          <input type="hidden" id="inputXScreenName" />
+          <input type="hidden" id="inputXUserId" />
+          <input type="hidden" id="inputXProfileImg" />
+          <div id="xLookupResult" class="hint" style="color: #38bdf8; margin-top: 2px;"></div>
+        </div>
+
+        <div class="form-group full">
+          <label>
+            ④ 개별 디스코드 웹후크 URL (선택)
             <span class="hint">비워두면 '내 기본 설정'의 기본 웹후크 주소로 알림이 발송됩니다.</span>
           </label>
           <input type="text" id="inputCustomWebhook" placeholder="https://discord.com/api/webhooks/..." />
@@ -742,14 +778,14 @@
 
         <div class="form-group full">
           <label>
-            ④ 디스코드 역할 멘션 (선택)
+            ⑤ 디스코드 역할 멘션 (선택)
             <span class="hint">방송 시작(뱅온) 시 호출할 역할 태그 (비워두면 멘션 없음). 예: @everyone, @here, 또는 &lt;@&amp;역할ID&gt;</span>
           </label>
           <input type="text" id="inputMentionText" placeholder="예: @everyone 또는 <@&123456789012345678> (기본값: 멘션 없음)" />
         </div>
 
         <div class="form-group full">
-          <label>⑤ 받을 알림 종류 선택</label>
+          <label>⑥ 받을 알림 종류 선택</label>
           <div class="checkbox-grid">
             <label class="checkbox-item"><input type="checkbox" id="chkChzzkOpen" checked /> 🔴 치지직 방송 시작</label>
             <label class="checkbox-item"><input type="checkbox" id="chkChzzkTitle" checked /> 📝 방제 변경</label>
@@ -758,6 +794,9 @@
             <label class="checkbox-item"><input type="checkbox" id="chkChzzkClose" /> ⚫ 방송 종료</label>
             <label class="checkbox-item"><input type="checkbox" id="chkCafeArticle" checked /> 📗 카페 새 게시글</label>
             <label class="checkbox-item"><input type="checkbox" id="chkCafeComment" checked /> 💬 카페 새 댓글</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkXPost" checked /> 🐦 X 새 포스트</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkXReply" /> 💬 X 새 답글(Reply)</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkXRetweet" /> 🔁 X 리트윗(RT)</label>
             <label class="checkbox-item"><input type="checkbox" id="chkEnabled" checked /> ✅ 이 방송인 감시 켜기</label>
           </div>
         </div>
@@ -976,9 +1015,13 @@
       e.preventDefault();
       const a = document.getElementById("naverNidAut");
       const s = document.getElementById("naverNidSes");
+      const xa = document.getElementById("xAuthToken");
+      const xc = document.getElementById("xCt0");
       const nextType = a.type === "password" ? "text" : "password";
       a.type = nextType;
       s.type = nextType;
+      if (xa) xa.type = nextType;
+      if (xc) xc.type = nextType;
     }
 
     async function loadAllSettings() {
@@ -991,6 +1034,8 @@
       document.getElementById("globalWebhookUrl").value = g.discord_webhook_url || "";
       document.getElementById("naverNidAut").value = g.naver_nid_aut || "";
       document.getElementById("naverNidSes").value = g.naver_nid_ses || "";
+      document.getElementById("xAuthToken").value = g.x_auth_token || "";
+      document.getElementById("xCt0").value = g.x_ct0 || "";
       document.getElementById("pollInterval").value = interval;
       document.getElementById("statusText").textContent = `실시간 감시 작동 중 (${interval}초 주기)`;
 
@@ -1012,7 +1057,7 @@
       }
 
       listEl.innerHTML = streamers.map((st) => {
-        const avatar = st.profile_image_url || st.cafe_profile_image_url || "https://ssl.pstatic.net/static/nng/glive/icon/favicon.png";
+        const avatar = st.profile_image_url || st.cafe_profile_image_url || st.x_profile_image_url || "https://ssl.pstatic.net/static/nng/glive/icon/favicon.png";
         const chzzkBadge = st.chzzk_channel_id
           ? `<a class="badge badge-chzzk" href="https://chzzk.naver.com/${st.chzzk_channel_id}" target="_blank">🟢 치지직 연결됨 (${st.chzzk_channel_id.slice(0, 6)}...)</a>`
           : `<span class="badge badge-muted">치지직 알림 끔</span>`;
@@ -1020,6 +1065,10 @@
         const cafeBadge = (st.cafe_club_id && st.cafe_member_key)
           ? `<a class="badge badge-cafe" href="https://cafe.naver.com/f-e/cafes/${st.cafe_club_id}/members/${st.cafe_member_key}" target="_blank">📗 네이버 카페 연결됨 (ID: ${st.cafe_club_id})</a>`
           : `<span class="badge badge-muted">카페 알림 끔</span>`;
+
+        const xBadge = st.x_screen_name
+          ? `<a class="badge badge-x" href="https://x.com/${st.x_screen_name}" target="_blank">🐦 X 연결됨 (@${st.x_screen_name})</a>`
+          : `<span class="badge badge-muted">X 알림 끔</span>`;
 
         const webhookBadge = st.custom_webhook_url
           ? `<span class="badge badge-webhook">개별 웹후크 사용</span>`
@@ -1048,6 +1097,7 @@
                 <div class="badges">
                   ${chzzkBadge}
                   ${cafeBadge}
+                  ${xBadge}
                   ${webhookBadge}
                   ${mentionBadge}
                 </div>
@@ -1068,6 +1118,8 @@
         discord_webhook_url: document.getElementById("globalWebhookUrl").value.trim(),
         naver_nid_aut: document.getElementById("naverNidAut").value.trim(),
         naver_nid_ses: document.getElementById("naverNidSes").value.trim(),
+        x_auth_token: document.getElementById("xAuthToken").value.trim(),
+        x_ct0: document.getElementById("xCt0").value.trim(),
         poll_interval_seconds: parseInt(document.getElementById("pollInterval").value || "60", 10),
       };
       const res = await fetch("/api/settings/global", {
@@ -1093,7 +1145,7 @@
     }
 
     async function sendStreamerPreview(streamerId) {
-      showToast("디스코드로 해당 방송인의 치지직·카페 미리보기 카드를 전송 중입니다...");
+      showToast("디스코드로 해당 방송인의 미리보기 카드를 전송 중입니다...");
       const res = await fetch(`/api/streamers/${streamerId}/preview`, { method: "POST" });
       const data = await res.json();
       showToast(data.message);
@@ -1111,6 +1163,7 @@
     function openStreamerModal(streamerId = null) {
       document.getElementById("chzzkLookupResult").textContent = "";
       document.getElementById("cafeLookupResult").textContent = "";
+      document.getElementById("xLookupResult").textContent = "";
       const kwInput = document.getElementById("chzzkSearchKeyword");
       if (kwInput) kwInput.value = "";
       const sResults = document.getElementById("chzzkSearchResults");
@@ -1128,6 +1181,10 @@
         document.getElementById("inputCafeUrl").value = "";
         document.getElementById("inputCafeClubId").value = "";
         document.getElementById("inputCafeMemberKey").value = "";
+        document.getElementById("inputX").value = "";
+        document.getElementById("inputXScreenName").value = "";
+        document.getElementById("inputXUserId").value = "";
+        document.getElementById("inputXProfileImg").value = "";
         document.getElementById("inputCustomWebhook").value = "";
         document.getElementById("inputMentionText").value = "";
         document.getElementById("chkChzzkOpen").checked = true;
@@ -1137,6 +1194,9 @@
         document.getElementById("chkChzzkClose").checked = false;
         document.getElementById("chkCafeArticle").checked = true;
         document.getElementById("chkCafeComment").checked = true;
+        document.getElementById("chkXPost").checked = true;
+        document.getElementById("chkXReply").checked = false;
+        document.getElementById("chkXRetweet").checked = false;
         document.getElementById("chkEnabled").checked = true;
       } else {
         const st = (currentSettings.streamers || []).find((x) => x.id === streamerId);
@@ -1149,6 +1209,10 @@
         document.getElementById("inputCafeUrl").value = st.cafe_article_url || "";
         document.getElementById("inputCafeClubId").value = st.cafe_club_id || "";
         document.getElementById("inputCafeMemberKey").value = st.cafe_member_key || "";
+        document.getElementById("inputX").value = st.x_input || (st.x_screen_name ? "@" + st.x_screen_name : "");
+        document.getElementById("inputXScreenName").value = st.x_screen_name || "";
+        document.getElementById("inputXUserId").value = st.x_user_id || "";
+        document.getElementById("inputXProfileImg").value = st.x_profile_image_url || "";
         document.getElementById("inputCustomWebhook").value = st.custom_webhook_url || "";
         document.getElementById("inputMentionText").value = st.mention_text || (st.mention_role_id ? "<@&" + st.mention_role_id + ">" : "");
         document.getElementById("chkChzzkOpen").checked = st.notify_chzzk_open !== false;
@@ -1158,6 +1222,9 @@
         document.getElementById("chkChzzkClose").checked = !!st.notify_chzzk_close;
         document.getElementById("chkCafeArticle").checked = st.notify_cafe_article !== false;
         document.getElementById("chkCafeComment").checked = st.notify_cafe_comment !== false;
+        document.getElementById("chkXPost").checked = st.notify_x_post !== false;
+        document.getElementById("chkXReply").checked = !!st.notify_x_reply;
+        document.getElementById("chkXRetweet").checked = !!st.notify_x_retweet;
         document.getElementById("chkEnabled").checked = st.enabled !== false;
       }
 
@@ -1225,6 +1292,41 @@
       }
     }
 
+    async function previewXLookup() {
+      const raw = document.getElementById("inputX").value.trim();
+      if (!raw) {
+        showToast("X(트위터) @아이디 또는 프로필 주소를 입력해 주세요.");
+        return;
+      }
+      const resEl = document.getElementById("xLookupResult");
+      resEl.textContent = "X(트위터) 계정 정보를 조회 중입니다...";
+      const res = await fetch("/api/lookup/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: raw,
+          x_auth_token: document.getElementById("xAuthToken").value.trim(),
+          x_ct0: document.getElementById("xCt0").value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("inputXScreenName").value = data.screen_name;
+        document.getElementById("inputXUserId").value = data.user_id;
+        document.getElementById("inputXProfileImg").value = data.profile_image_url || "";
+        document.getElementById("inputX").value = "@" + data.screen_name;
+        if (!document.getElementById("inputName").value && data.name) {
+          document.getElementById("inputName").value = data.name;
+        }
+        if (!document.getElementById("inputProfileImg").value && data.profile_image_url) {
+          document.getElementById("inputProfileImg").value = data.profile_image_url;
+        }
+        resEl.textContent = `✅ 확인 완료: ${data.name} (@${data.screen_name} | ID: ${data.user_id})`;
+      } else {
+        resEl.textContent = `❌ ${data.message}`;
+      }
+    }
+
     async function saveStreamer() {
       const payload = {
         id: document.getElementById("editStreamerId").value.trim(),
@@ -1234,6 +1336,10 @@
         cafe_article_url: document.getElementById("inputCafeUrl").value.trim(),
         cafe_club_id: document.getElementById("inputCafeClubId").value.trim(),
         cafe_member_key: document.getElementById("inputCafeMemberKey").value.trim(),
+        x_input: document.getElementById("inputX").value.trim(),
+        x_screen_name: document.getElementById("inputXScreenName").value.trim(),
+        x_user_id: document.getElementById("inputXUserId").value.trim(),
+        x_profile_image_url: document.getElementById("inputXProfileImg").value.trim(),
         custom_webhook_url: document.getElementById("inputCustomWebhook").value.trim(),
         mention_text: document.getElementById("inputMentionText").value.trim(),
         notify_chzzk_open: document.getElementById("chkChzzkOpen").checked,
@@ -1243,6 +1349,9 @@
         notify_chzzk_close: document.getElementById("chkChzzkClose").checked,
         notify_cafe_article: document.getElementById("chkCafeArticle").checked,
         notify_cafe_comment: document.getElementById("chkCafeComment").checked,
+        notify_x_post: document.getElementById("chkXPost").checked,
+        notify_x_reply: document.getElementById("chkXReply").checked,
+        notify_x_retweet: document.getElementById("chkXRetweet").checked,
         enabled: document.getElementById("chkEnabled").checked,
       };
 

@@ -24,11 +24,20 @@ from collectors.naver_cafe import (
     fetch_member_articles,
     fetch_member_comments,
 )
+from collectors.twitter_x import (
+    XCookieExpiredError,
+    _build_x_cookies,
+    _resolve_x_streamer_avatar,
+    extract_x_user_info,
+    fetch_x_user_tweets,
+    parse_x_screen_name,
+)
 from notifiers.discord_webhook import (
     COLOR_CHZZK_GREEN,
     COLOR_CHZZK_OFFLINE,
     COLOR_NAVER_CAFE,
     COLOR_NAVER_COMMENT,
+    COLOR_TWITTER_X,
     send_discord_notification,
     validate_discord_webhook_url,
 )
@@ -248,6 +257,67 @@ def send_preview_for_streamer(
             if ok:
                 sent_count += 1
 
+    # 3. X(구 트위터) 최신 포스트 미리보기
+    x_screen_name = (streamer.get("x_screen_name") or "").strip()
+    x_user_id = (streamer.get("x_user_id") or "").strip()
+    if x_screen_name or x_user_id:
+        x_cookies = _build_x_cookies(
+            global_cfg.get("x_auth_token"), global_cfg.get("x_ct0")
+        )
+        if x_cookies:
+            try:
+                if not x_user_id and x_screen_name:
+                    x_info = extract_x_user_info(
+                        x_screen_name,
+                        global_cfg.get("x_auth_token"),
+                        global_cfg.get("x_ct0"),
+                    )
+                    if x_info:
+                        x_user_id = x_info["user_id"]
+                        x_screen_name = x_info["screen_name"]
+                        streamer["x_user_id"] = x_user_id
+                        streamer["x_screen_name"] = x_screen_name
+                if x_user_id:
+                    tweets = fetch_x_user_tweets(
+                        user_id=x_user_id,
+                        screen_name=x_screen_name,
+                        cookies=x_cookies,
+                        include_replies=bool(streamer.get("notify_x_reply", False)),
+                        force=True,
+                    )
+                    if tweets:
+                        latest_tw = tweets[0]
+                        tw_text = latest_tw.get("text") or "(내용 없음)"
+                        if len(tw_text) > 500:
+                            tw_text = tw_text[:500] + "..."
+                        tw_url = (
+                            latest_tw.get("url")
+                            or f"https://x.com/{x_screen_name}/status/{latest_tw['id']}"
+                        )
+                        avatar_url = _resolve_x_streamer_avatar(
+                            streamer, latest_tw.get("profile_image_url")
+                        )
+                        media_url = latest_tw.get("media_url") or None
+                        ok = send_discord_notification(
+                            content=f"🐦 **[실전 미리보기] {streamer_name}** (@{x_screen_name})님의 최근 X 포스트입니다!",
+                            embed_title=f"{streamer_name} (@{x_screen_name})님의 최근 포스트",
+                            embed_url=tw_url,
+                            embed_description=tw_text,
+                            color=COLOR_TWITTER_X,
+                            author_name=f"{streamer_name} (@{x_screen_name}) - X",
+                            author_icon_url=avatar_url,
+                            thumbnail_url=avatar_url,
+                            image_url=media_url,
+                            footer_text="X(구 트위터) 포스트 미리보기",
+                            webhook_username=f"{streamer_name} X 알림",
+                            webhook_avatar_url=avatar_url,
+                            webhook_url=webhook_url,
+                        )
+                        if ok:
+                            sent_count += 1
+            except Exception as e:
+                log_event(f"[미리보기 경고] {streamer_name} X 미리보기 조회 오류: {e}", username=username)
+
     log_event(
         f"[{username or '시스템'}] {streamer_name} 미리보기 카드 {sent_count}건 디스코드 발송 완료",
         username=username,
@@ -374,6 +444,8 @@ def api_save_global():
     g["discord_webhook_url"] = webhook_url
     g["naver_nid_aut"] = (body.get("naver_nid_aut") or "").strip()
     g["naver_nid_ses"] = (body.get("naver_nid_ses") or "").strip()
+    g["x_auth_token"] = (body.get("x_auth_token") or "").strip()
+    g["x_ct0"] = (body.get("x_ct0") or "").strip()
 
     try:
         interval = int(body.get("poll_interval_seconds") or 60)
@@ -381,7 +453,7 @@ def api_save_global():
         interval = 60
 
     save_user_settings(username, user_global=g, poll_interval_seconds=interval)
-    log_event(f"[{username}] 개인 공통 설정(웹후크/쿠키)이 저장되었습니다.", username=username)
+    log_event(f"[{username}] 개인 공통 설정(웹후크/네이버·X 쿠키)이 저장되었습니다.", username=username)
     return jsonify({"ok": True, "message": "✅ 내 공통 설정이 저장되었습니다!"})
 
 
@@ -419,6 +491,59 @@ def api_lookup_cafe():
             {
                 "ok": False,
                 "message": "게시글에서 작성자 정보를 추출하지 못했습니다. (네이버 로그인 쿠키 NID_AUT, NID_SES가 입력되어 있는지 확인해 주세요)",
+            }
+        )
+    return jsonify({"ok": True, **info})
+
+
+@app.route("/api/lookup/x", methods=["POST"])
+@login_required
+def api_lookup_x():
+    username = session["username"]
+    user_data = load_user_settings(username)
+    g_cfg = user_data.get("global") or {}
+
+    body = request.get_json(force=True) or {}
+    query = (body.get("query") or body.get("x_input") or "").strip()
+    x_auth_token = (
+        body.get("x_auth_token") or g_cfg.get("x_auth_token") or config.X_AUTH_TOKEN or ""
+    ).strip()
+    x_ct0 = (
+        body.get("x_ct0") or g_cfg.get("x_ct0") or config.X_CT0 or ""
+    ).strip()
+
+    parsed = parse_x_screen_name(query)
+    if not parsed:
+        return jsonify(
+            {
+                "ok": False,
+                "message": "유효한 X(트위터) @아이디 또는 프로필/포스트 주소를 입력해 주세요.",
+            }
+        )
+
+    if not x_auth_token or not x_ct0:
+        return jsonify(
+            {
+                "ok": False,
+                "message": "상단 '공통 설정'에 X(트위터) 부계정 쿠키(auth_token, ct0)를 먼저 입력해 주세요.",
+            }
+        )
+
+    try:
+        info = extract_x_user_info(query, x_auth_token, x_ct0)
+    except XCookieExpiredError:
+        return jsonify(
+            {
+                "ok": False,
+                "message": "X(트위터) 로그인 쿠키(auth_token, ct0)가 만료되었거나 올바르지 않습니다.",
+            }
+        )
+
+    if not info:
+        return jsonify(
+            {
+                "ok": False,
+                "message": f"X에서 @{parsed} 계정을 찾지 못했습니다. 아이디를 다시 확인해 주세요.",
             }
         )
     return jsonify({"ok": True, **info})
@@ -568,6 +693,10 @@ def api_streamers_batch():
             "cafe_article_url": "",
             "cafe_club_id": "",
             "cafe_member_key": "",
+            "x_input": "",
+            "x_screen_name": "",
+            "x_user_id": "",
+            "x_profile_image_url": "",
             "custom_webhook_url": "",
             "mention_text": "",
             "mention_role_id": "",
@@ -580,6 +709,9 @@ def api_streamers_batch():
             "notify_chzzk_community": True,
             "notify_cafe_article": False,
             "notify_cafe_comment": False,
+            "notify_x_post": False,
+            "notify_x_reply": False,
+            "notify_x_retweet": False,
         }
         streamers.append(st_obj)
         existing_cids.add(cid)
@@ -606,6 +738,10 @@ def api_save_streamer():
     cafe_url = (body.get("cafe_article_url") or "").strip()
     cafe_club_id = (body.get("cafe_club_id") or "").strip()
     cafe_member_key = (body.get("cafe_member_key") or "").strip()
+    x_input = (body.get("x_input") or "").strip()
+    x_screen_name = (body.get("x_screen_name") or "").strip()
+    x_user_id = (body.get("x_user_id") or "").strip()
+    x_profile_img = (body.get("x_profile_image_url") or "").strip()
     custom_webhook = (body.get("custom_webhook_url") or "").strip()
     cafe_profile_img = ""
 
@@ -640,11 +776,47 @@ def api_save_streamer():
             if not profile_img and cafe_profile_img:
                 profile_img = cafe_profile_img
 
-    if not chzzk_channel_id and not (cafe_club_id and cafe_member_key):
+    if x_input:
+        parsed_x = parse_x_screen_name(x_input)
+        if parsed_x:
+            if not x_screen_name or x_screen_name.lower() != parsed_x.lower():
+                x_screen_name = parsed_x
+                x_user_id = ""
+                x_profile_img = ""
+            if not x_user_id:
+                try:
+                    x_info = extract_x_user_info(
+                        x_input,
+                        g_cfg.get("x_auth_token"),
+                        g_cfg.get("x_ct0"),
+                    )
+                    if x_info:
+                        x_screen_name = x_info["screen_name"]
+                        x_user_id = x_info["user_id"]
+                        x_profile_img = x_info.get("profile_image_url") or x_profile_img
+                        if not name and x_info.get("name"):
+                            name = x_info["name"]
+                        if not profile_img and x_profile_img:
+                            profile_img = x_profile_img
+                except Exception:
+                    pass
+        else:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "유효한 X(트위터) @아이디 또는 프로필 주소를 입력해 주세요.",
+                }
+            )
+    else:
+        x_screen_name = ""
+        x_user_id = ""
+        x_profile_img = ""
+
+    if not chzzk_channel_id and not (cafe_club_id and cafe_member_key) and not x_screen_name:
         return jsonify(
             {
                 "ok": False,
-                "message": "치지직 채널 정보 또는 네이버 카페 대표 게시글 정보 중 최소 1개는 유효해야 합니다.",
+                "message": "치지직 채널 정보, 네이버 카페 대표 게시글, 또는 X(트위터) 계정 중 최소 1개는 유효해야 합니다.",
             }
         )
 
@@ -652,14 +824,18 @@ def api_save_streamer():
     streamer_obj: dict[str, Any] = {
         "id": streamer_id,
         "enabled": bool(body.get("enabled", True)),
-        "name": name or "방송인",
-        "profile_image_url": profile_img,
+        "name": name or x_screen_name or "방송인",
+        "profile_image_url": profile_img or x_profile_img,
         "cafe_profile_image_url": cafe_profile_img or profile_img,
         "chzzk_input": chzzk_input,
         "chzzk_channel_id": chzzk_channel_id,
         "cafe_article_url": cafe_url,
         "cafe_club_id": cafe_club_id,
         "cafe_member_key": cafe_member_key,
+        "x_input": x_input,
+        "x_screen_name": x_screen_name,
+        "x_user_id": x_user_id,
+        "x_profile_image_url": x_profile_img,
         "custom_webhook_url": custom_webhook,
         "mention_text": (body.get("mention_text") or "").strip(),
         "mention_role_id": (body.get("mention_role_id") or "").strip(),
@@ -672,6 +848,9 @@ def api_save_streamer():
         "notify_chzzk_close": bool(body.get("notify_chzzk_close", False)),
         "notify_cafe_article": bool(body.get("notify_cafe_article", True)),
         "notify_cafe_comment": bool(body.get("notify_cafe_comment", True)),
+        "notify_x_post": bool(body.get("notify_x_post", bool(x_screen_name))),
+        "notify_x_reply": bool(body.get("notify_x_reply", False)),
+        "notify_x_retweet": bool(body.get("notify_x_retweet", False)),
     }
 
     streamers = user_data.get("streamers") or []

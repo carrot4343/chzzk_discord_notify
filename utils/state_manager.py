@@ -31,6 +31,11 @@ def get_default_streamer_state() -> dict[str, Any]:
             "comments_initialized": False,
             "last_comment_id": None,
         },
+        "twitter_x": {
+            "initialized": False,
+            "last_tweet_id": None,
+            "user_id": None,
+        },
     }
 
 

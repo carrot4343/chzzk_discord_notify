@@ -14,6 +14,7 @@ import webbrowser
 from bot.discord_bot import start_discord_bot_background
 from collectors.chzzk import check_chzzk_for_streamer
 from collectors.naver_cafe import check_naver_cafe_for_streamer
+from collectors.twitter_x import check_twitter_x_for_streamer
 from utils.settings_manager import (
     load_all_data,
     log_event,
@@ -26,22 +27,33 @@ _cycle_lock = threading.Lock()
 
 
 def _check_streamer_task(task: dict[str, Any]) -> tuple[bool, bool, Optional[str]]:
-    """개별 방송인의 치지직 및 네이버 카페 상태를 비동기 스레드 풀에서 확인합니다."""
+    """개별 방송인의 치지직, 네이버 카페 및 X(트위터) 상태를 비동기 스레드 풀에서 확인합니다."""
     streamer = task["streamer"]
     st_state = task["st_state"]
     g_cfg = task["g_cfg"]
     st_name = task.get("name") or "방송인"
-    prev_img = streamer.get("profile_image_url")
+    prev_snapshot = (
+        streamer.get("profile_image_url"),
+        streamer.get("x_user_id"),
+        streamer.get("x_profile_image_url"),
+    )
     state_changed = False
     data_changed = False
 
     try:
         if check_chzzk_for_streamer(streamer, st_state, g_cfg):
             state_changed = True
-        if streamer.get("profile_image_url") != prev_img:
-            data_changed = True
         if check_naver_cafe_for_streamer(streamer, st_state, g_cfg):
             state_changed = True
+        if check_twitter_x_for_streamer(streamer, st_state, g_cfg):
+            state_changed = True
+        curr_snapshot = (
+            streamer.get("profile_image_url"),
+            streamer.get("x_user_id"),
+            streamer.get("x_profile_image_url"),
+        )
+        if curr_snapshot != prev_snapshot:
+            data_changed = True
         return state_changed, data_changed, None
     except Exception as exc:
         return state_changed, data_changed, f"'{st_name}' 점검 중 오류: {exc}"
@@ -154,20 +166,41 @@ def run_all_streamers_cycle() -> None:
         if state_changed:
             save_state(state)
         if data_changed:
-            updated_imgs = {
-                t["streamer"].get("id"): t["streamer"].get("profile_image_url")
+            updated_meta = {
+                t["streamer"].get("id"): {
+                    "profile_image_url": t["streamer"].get("profile_image_url"),
+                    "x_user_id": t["streamer"].get("x_user_id"),
+                    "x_screen_name": t["streamer"].get("x_screen_name"),
+                    "x_profile_image_url": t["streamer"].get("x_profile_image_url"),
+                }
                 for t in tasks
-                if t["streamer"].get("id") and t["streamer"].get("profile_image_url")
+                if t["streamer"].get("id")
             }
             fresh_data = load_all_data()
             for u_obj in (fresh_data.get("users") or {}).values():
                 for st in u_obj.get("streamers") or []:
-                    if st.get("id") in updated_imgs:
-                        st["profile_image_url"] = updated_imgs[st["id"]]
+                    meta = updated_meta.get(st.get("id"))
+                    if meta:
+                        if meta.get("profile_image_url"):
+                            st["profile_image_url"] = meta["profile_image_url"]
+                        if meta.get("x_user_id"):
+                            st["x_user_id"] = meta["x_user_id"]
+                        if meta.get("x_screen_name"):
+                            st["x_screen_name"] = meta["x_screen_name"]
+                        if meta.get("x_profile_image_url"):
+                            st["x_profile_image_url"] = meta["x_profile_image_url"]
             for g_obj in (fresh_data.get("guilds") or {}).values():
                 for st in g_obj.get("streamers") or []:
-                    if st.get("id") in updated_imgs:
-                        st["profile_image_url"] = updated_imgs[st["id"]]
+                    meta = updated_meta.get(st.get("id"))
+                    if meta:
+                        if meta.get("profile_image_url"):
+                            st["profile_image_url"] = meta["profile_image_url"]
+                        if meta.get("x_user_id"):
+                            st["x_user_id"] = meta["x_user_id"]
+                        if meta.get("x_screen_name"):
+                            st["x_screen_name"] = meta["x_screen_name"]
+                        if meta.get("x_profile_image_url"):
+                            st["x_profile_image_url"] = meta["x_profile_image_url"]
             save_all_data(fresh_data)
 
         log_event(

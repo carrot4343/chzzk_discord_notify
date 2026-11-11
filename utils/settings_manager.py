@@ -119,6 +119,10 @@ def _decrypt_dict_cookies(g_cfg: dict[str, Any]) -> None:
         g_cfg["naver_nid_aut"] = decrypt_credential(g_cfg["naver_nid_aut"])
     if "naver_nid_ses" in g_cfg:
         g_cfg["naver_nid_ses"] = decrypt_credential(g_cfg["naver_nid_ses"])
+    if "x_auth_token" in g_cfg:
+        g_cfg["x_auth_token"] = decrypt_credential(g_cfg["x_auth_token"])
+    if "x_ct0" in g_cfg:
+        g_cfg["x_ct0"] = decrypt_credential(g_cfg["x_ct0"])
 
 
 def _prepare_data_for_saving(data: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +134,8 @@ def _prepare_data_for_saving(data: dict[str, Any]) -> dict[str, Any]:
             g = dict(seed_copy["global"])
             g["naver_nid_aut"] = encrypt_credential(g.get("naver_nid_aut"))
             g["naver_nid_ses"] = encrypt_credential(g.get("naver_nid_ses"))
+            g["x_auth_token"] = encrypt_credential(g.get("x_auth_token"))
+            g["x_ct0"] = encrypt_credential(g.get("x_ct0"))
             seed_copy["global"] = g
         copied["legacy_seed"] = seed_copy
 
@@ -141,6 +147,8 @@ def _prepare_data_for_saving(data: dict[str, Any]) -> dict[str, Any]:
                 g = dict(u_copy["global"])
                 g["naver_nid_aut"] = encrypt_credential(g.get("naver_nid_aut"))
                 g["naver_nid_ses"] = encrypt_credential(g.get("naver_nid_ses"))
+                g["x_auth_token"] = encrypt_credential(g.get("x_auth_token"))
+                g["x_ct0"] = encrypt_credential(g.get("x_ct0"))
                 u_copy["global"] = g
             users_copy[uname] = u_copy
         copied["users"] = users_copy
@@ -153,6 +161,8 @@ def _prepare_data_for_saving(data: dict[str, Any]) -> dict[str, Any]:
                 g = dict(g_copy["global"])
                 g["naver_nid_aut"] = encrypt_credential(g.get("naver_nid_aut"))
                 g["naver_nid_ses"] = encrypt_credential(g.get("naver_nid_ses"))
+                g["x_auth_token"] = encrypt_credential(g.get("x_auth_token"))
+                g["x_ct0"] = encrypt_credential(g.get("x_ct0"))
                 g_copy["global"] = g
             guilds_copy[gid] = g_copy
         copied["guilds"] = guilds_copy
@@ -283,6 +293,10 @@ def _build_initial_template_from_env() -> dict[str, Any]:
                 "cafe_article_url": "",
                 "cafe_club_id": config.NAVER_CAFE_CLUB_ID,
                 "cafe_member_key": config.NAVER_CAFE_MEMBER_KEY,
+                "x_input": "",
+                "x_screen_name": "",
+                "x_user_id": "",
+                "x_profile_image_url": "",
                 "custom_webhook_url": "",
                 "notify_chzzk_open": config.NOTIFY_CHZZK_OPEN,
                 "notify_chzzk_close": config.NOTIFY_CHZZK_CLOSE,
@@ -291,6 +305,9 @@ def _build_initial_template_from_env() -> dict[str, Any]:
                 "notify_chzzk_community": config.NOTIFY_CHZZK_COMMUNITY,
                 "notify_cafe_article": config.NOTIFY_CAFE_ARTICLE,
                 "notify_cafe_comment": config.NOTIFY_CAFE_COMMENT,
+                "notify_x_post": config.NOTIFY_X_POST,
+                "notify_x_reply": config.NOTIFY_X_REPLY,
+                "notify_x_retweet": config.NOTIFY_X_RETWEET,
             }
         )
 
@@ -299,6 +316,8 @@ def _build_initial_template_from_env() -> dict[str, Any]:
             "discord_webhook_url": config.DISCORD_WEBHOOK_URL,
             "naver_nid_aut": config.NAVER_NID_AUT,
             "naver_nid_ses": config.NAVER_NID_SES,
+            "x_auth_token": config.X_AUTH_TOKEN,
+            "x_ct0": config.X_CT0,
         },
         "streamers": streamers,
     }
@@ -311,6 +330,8 @@ def _create_empty_user_workspace() -> dict[str, Any]:
             "discord_webhook_url": "",
             "naver_nid_aut": "",
             "naver_nid_ses": "",
+            "x_auth_token": "",
+            "x_ct0": "",
         },
         "streamers": [],
     }
