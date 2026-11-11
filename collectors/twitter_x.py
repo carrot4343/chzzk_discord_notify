@@ -19,7 +19,7 @@ from notifiers.discord_webhook import (
     DEFAULT_PNG_ICON,
     send_discord_notification,
 )
-from utils.settings_manager import load_settings, log_event
+from utils.settings_manager import load_all_data, load_settings, log_event
 
 # X 웹 클라이언트 공용 Bearer 토큰 (공식 웹앱 번들 표준값)
 _X_PUBLIC_BEARER_TOKEN = (
@@ -178,7 +178,7 @@ def _build_x_cookies(
     x_auth_token: Optional[str] = None,
     x_ct0: Optional[str] = None,
 ) -> dict[str, str]:
-    """전달받은 쿠키 또는 settings.json / .env 의 X 로그인 쿠키(auth_token, ct0)를 반환합니다."""
+    """전달받은 쿠키 또는 settings.json(웹/길드) / .env 의 X 로그인 쿠키(auth_token, ct0)를 반환합니다."""
     if x_auth_token and x_ct0:
         return {"auth_token": x_auth_token.strip(), "ct0": x_ct0.strip()}
 
@@ -188,6 +188,19 @@ def _build_x_cookies(
     ct0 = (x_ct0 or g_cfg.get("x_ct0") or config.X_CT0 or "").strip()
     if auth_token and ct0:
         return {"auth_token": auth_token, "ct0": ct0}
+
+    # 디스코드 서버(/x쿠키설정)에 등록된 쿠키가 있으면 공용 폴백으로 활용
+    try:
+        all_data = load_all_data()
+        for g_obj in (all_data.get("guilds") or {}).values():
+            gg = g_obj.get("global") or {}
+            g_aut = (gg.get("x_auth_token") or "").strip()
+            g_ct0 = (gg.get("x_ct0") or "").strip()
+            if g_aut and g_ct0:
+                return {"auth_token": g_aut, "ct0": g_ct0}
+    except Exception:
+        pass
+
     return {}
 
 
@@ -240,7 +253,7 @@ def parse_x_screen_name(raw_input: str) -> Optional[str]:
     return None
 
 
-def _discover_x_query_ids() -> None:
+def _discover_x_query_ids(cookies: Optional[dict[str, str]] = None) -> None:
     """X 웹 번들 스크립트에서 최신 GraphQL queryId를 동적으로 탐색하여 캐싱합니다 (폴백용)."""
     global _last_query_id_discovery_ts
     now = time.time()
@@ -249,27 +262,104 @@ def _discover_x_query_ids() -> None:
     _last_query_id_discovery_ts = now
 
     try:
-        resp = requests.get("https://x.com", headers=config.DEFAULT_HEADERS, timeout=10)
+        resp = requests.get(
+            "https://x.com",
+            headers=config.DEFAULT_HEADERS,
+            cookies=cookies,
+            timeout=10,
+        )
         if resp.status_code != 200:
             return
         bundle_urls = re.findall(
-            r"https://abs\.twimg\.com/responsive-web/client-web/main\.[a-zA-Z0-9]+\.js",
+            r"https://abs\.twimg\.com/(?:responsive-web/client-web/main\.[a-zA-Z0-9]+|x-web/x-web/[^\"']+)\.js",
             resp.text,
         )
-        if not bundle_urls:
-            return
-        js_resp = requests.get(bundle_urls[0], headers=config.DEFAULT_HEADERS, timeout=10)
-        if js_resp.status_code != 200:
-            return
-        for op_name in ("UserByScreenName", "UserTweets", "UserTweetsAndReplies"):
-            m = re.search(
-                rf'queryId:"([^"]+)",operationName:"{op_name}"',
-                js_resp.text,
-            )
-            if m:
-                _discovered_query_ids[op_name] = m.group(1)
+        for b_url in bundle_urls[:3]:
+            js_resp = requests.get(b_url, headers=config.DEFAULT_HEADERS, timeout=10)
+            if js_resp.status_code != 200:
+                continue
+            for op_name in ("UserByScreenName", "UserTweets", "UserTweetsAndReplies"):
+                m = re.search(
+                    rf'queryId:"([^"]+)",operationName:"{op_name}"',
+                    js_resp.text,
+                )
+                if m:
+                    _discovered_query_ids[op_name] = m.group(1)
     except Exception:
         pass
+
+
+def _lookup_x_user_public_fallback(screen_name: str) -> Optional[dict[str, str]]:
+    """
+    인증 쿠키가 없거나 GraphQL Query ID가 변경된 경우에도
+    공개 API(fxtwitter) 및 X 공식 신디케이션을 통해 계정 기본 정보를 조회합니다.
+    """
+    # 1차 폴백: api.fxtwitter.com 공개 프로필 조회
+    try:
+        resp = requests.get(
+            f"https://api.fxtwitter.com/{screen_name}",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; TaemtaemNotify/1.0)"},
+            timeout=6,
+        )
+        if resp.status_code == 404:
+            return None
+        if resp.status_code == 200:
+            data = resp.json()
+            user = data.get("user") or {}
+            uid = str(user.get("id") or "").strip()
+            sname = str(user.get("screen_name") or screen_name).strip()
+            name = str(user.get("name") or sname).strip()
+            img_url = _upgrade_profile_image_url(str(user.get("avatar_url") or "").strip())
+            if uid and sname:
+                return {
+                    "user_id": uid,
+                    "screen_name": sname,
+                    "name": name or sname,
+                    "profile_image_url": img_url,
+                }
+    except Exception:
+        pass
+
+    # 2차 폴백: X 공식 syndication 타임라인 프로필 메타데이터 조회
+    try:
+        syn_resp = requests.get(
+            f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}",
+            headers=config.DEFAULT_HEADERS,
+            timeout=8,
+        )
+        if syn_resp.status_code == 200:
+            m = re.search(
+                r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                syn_resp.text,
+            )
+            if m:
+                syn_data = json.loads(m.group(1))
+                entries = (
+                    ((syn_data.get("props") or {}).get("pageProps") or {})
+                    .get("timeline", {})
+                    .get("entries")
+                    or []
+                )
+                for entry in entries:
+                    tw = (entry.get("content") or {}).get("tweet") or {}
+                    u = tw.get("user") or {}
+                    uid = str(u.get("id_str") or "").strip()
+                    sname = str(u.get("screen_name") or screen_name).strip()
+                    name = str(u.get("name") or sname).strip()
+                    img_url = _upgrade_profile_image_url(
+                        str(u.get("profile_image_url_https") or "").strip()
+                    )
+                    if uid and sname:
+                        return {
+                            "user_id": uid,
+                            "screen_name": sname,
+                            "name": name or sname,
+                            "profile_image_url": img_url,
+                        }
+    except Exception:
+        pass
+
+    return None
 
 
 def _get_query_id_candidates(operation_name: str, defaults: list[str]) -> list[str]:
@@ -325,11 +415,13 @@ def extract_x_user_info(
     raw_input: str,
     x_auth_token: Optional[str] = None,
     x_ct0: Optional[str] = None,
+    allow_public_fallback: bool = True,
 ) -> Optional[dict[str, str]]:
     """
     X 핸들 또는 프로필/포스트 URL에서 계정 정보를 조회하여
     {"user_id": ..., "screen_name": ..., "name": ..., "profile_image_url": ...} 를 반환합니다.
     쿠키가 만료되었거나 유효하지 않으면 XCookieExpiredError를 발생시킵니다.
+    쿠키가 없거나 GraphQL 조회에서 찾지 못한 경우 allow_public_fallback=True이면 공개 API 폴백을 수행합니다.
     """
     screen_name = parse_x_screen_name(raw_input)
     if not screen_name:
@@ -342,64 +434,68 @@ def extract_x_user_info(
         return cached[1]
 
     cookies = _build_x_cookies(x_auth_token, x_ct0)
-    if not cookies:
-        return None
+    if cookies:
+        headers = _build_x_headers(cookies["ct0"])
 
-    headers = _build_x_headers(cookies["ct0"])
-    import json
+        variables = json.dumps(
+            {"screen_name": screen_name, "withSafetyModeUserFields": True},
+            separators=(",", ":"),
+        )
+        features = json.dumps(_USER_FEATURES, separators=(",", ":"))
+        field_toggles = json.dumps(
+            {"withAuxiliaryUserLabels": False}, separators=(",", ":")
+        )
 
-    variables = json.dumps(
-        {"screen_name": screen_name, "withSafetyModeUserFields": True},
-        separators=(",", ":"),
-    )
-    features = json.dumps(_USER_FEATURES, separators=(",", ":"))
-    field_toggles = json.dumps(
-        {"withAuxiliaryUserLabels": False}, separators=(",", ":")
-    )
+        candidates = _get_query_id_candidates("UserByScreenName", _USER_BY_SCREEN_NAME_QUERY_IDS)
 
-    candidates = _get_query_id_candidates("UserByScreenName", _USER_BY_SCREEN_NAME_QUERY_IDS)
-
-    for attempt in range(2):
-        for qid in candidates:
-            url = f"https://x.com/i/api/graphql/{qid}/UserByScreenName"
-            try:
-                resp = requests.get(
-                    url,
-                    params={
-                        "variables": variables,
-                        "features": features,
-                        "fieldToggles": field_toggles,
-                    },
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=10,
-                )
-                if resp.status_code in (401, 403):
-                    raise XCookieExpiredError(f"HTTP {resp.status_code}")
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    errors = data.get("errors") or []
-                    for err in errors:
-                        if err.get("code") in (32, 89, 215, 326):
-                            raise XCookieExpiredError(str(err.get("message") or "Auth Error"))
-
-                    user_res = (
-                        ((data.get("data") or {}).get("user") or {}).get("result") or {}
+        for attempt in range(2):
+            for qid in candidates:
+                url = f"https://x.com/i/api/graphql/{qid}/UserByScreenName"
+                try:
+                    resp = requests.get(
+                        url,
+                        params={
+                            "variables": variables,
+                            "features": features,
+                            "fieldToggles": field_toggles,
+                        },
+                        headers=headers,
+                        cookies=cookies,
+                        timeout=10,
                     )
-                    info = _extract_user_fields_from_graphql_result(user_res)
-                    if info:
-                        _prune_cache(_user_info_cache, 300.0, _MAX_CACHE_ENTRIES)
-                        _user_info_cache[cache_key] = (now, info)
-                        return info
-            except XCookieExpiredError:
-                raise
-            except Exception as e:
-                log_event(f"[X 조회 경고] UserByScreenName({qid}) 호출 오류: {e}")
+                    if resp.status_code in (401, 403):
+                        raise XCookieExpiredError(f"HTTP {resp.status_code}")
 
-        if attempt == 0:
-            _discover_x_query_ids()
-            candidates = _get_query_id_candidates("UserByScreenName", _USER_BY_SCREEN_NAME_QUERY_IDS)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        errors = data.get("errors") or []
+                        for err in errors:
+                            if err.get("code") in (32, 89, 215, 326):
+                                raise XCookieExpiredError(str(err.get("message") or "Auth Error"))
+
+                        user_res = (
+                            ((data.get("data") or {}).get("user") or {}).get("result") or {}
+                        )
+                        info = _extract_user_fields_from_graphql_result(user_res)
+                        if info:
+                            _prune_cache(_user_info_cache, 300.0, _MAX_CACHE_ENTRIES)
+                            _user_info_cache[cache_key] = (now, info)
+                            return info
+                except XCookieExpiredError:
+                    raise
+                except Exception as e:
+                    log_event(f"[X 조회 경고] UserByScreenName({qid}) 호출 오류: {e}")
+
+            if attempt == 0:
+                _discover_x_query_ids(cookies)
+                candidates = _get_query_id_candidates("UserByScreenName", _USER_BY_SCREEN_NAME_QUERY_IDS)
+
+    if allow_public_fallback:
+        fallback_info = _lookup_x_user_public_fallback(screen_name)
+        if fallback_info:
+            _prune_cache(_user_info_cache, 300.0, _MAX_CACHE_ENTRIES)
+            _user_info_cache[cache_key] = (now, fallback_info)
+            return fallback_info
 
     return None
 
@@ -695,7 +791,7 @@ def fetch_x_user_tweets(
                 log_event(f"[X 타임라인 경고] {operation_name}({qid}) 호출 오류: {e}")
 
         if attempt == 0:
-            _discover_x_query_ids()
+            _discover_x_query_ids(ck)
             candidates = _get_query_id_candidates(operation_name, default_qids)
 
     return cached[1] if cached else []

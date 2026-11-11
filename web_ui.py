@@ -521,23 +521,22 @@ def api_lookup_x():
             }
         )
 
-    if not x_auth_token or not x_ct0:
-        return jsonify(
-            {
-                "ok": False,
-                "message": "상단 '공통 설정'에 X(트위터) 부계정 쿠키(auth_token, ct0)를 먼저 입력해 주세요.",
-            }
-        )
-
     try:
-        info = extract_x_user_info(query, x_auth_token, x_ct0)
-    except XCookieExpiredError:
-        return jsonify(
-            {
-                "ok": False,
-                "message": "X(트위터) 로그인 쿠키(auth_token, ct0)가 만료되었거나 올바르지 않습니다.",
-            }
+        info = extract_x_user_info(
+            query,
+            x_auth_token or None,
+            x_ct0 or None,
+            True,
         )
+    except XCookieExpiredError:
+        info = extract_x_user_info(query, None, None, True)
+        if not info:
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": "X(트위터) 로그인 쿠키(auth_token, ct0)가 만료되었거나 올바르지 않습니다.",
+                }
+            )
 
     if not info:
         return jsonify(

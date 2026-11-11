@@ -583,6 +583,26 @@ class TestXIntegrationSuite(unittest.TestCase):
                 self.assertEqual(btn_labels.get("toggle_x_reply"), "⚫ X 답글")
                 self.assertEqual(btn_labels.get("toggle_x_retweet"), "🟢 X 리트윗")
 
+            # X 미연동 방송인의 경우 notify_x_post가 True로 남아있더라도 버튼은 꺼짐(⚫)으로 표시되어야 함
+            unlinked_st = {
+                "id": "st_2",
+                "enabled": True,
+                "name": "시즈키 토아",
+                "x_screen_name": "",
+                "notify_x_post": True,
+            }
+            with patch(
+                "bot.discord_bot.load_guild_settings",
+                return_value={"streamers": [unlinked_st]},
+            ):
+                view_unlinked = discord_bot.StreamerConfigView("111", "테스트서버", "st_2")
+                unlinked_labels = {
+                    child.custom_id: child.label
+                    for child in view_unlinked.children
+                    if hasattr(child, "custom_id")
+                }
+                self.assertEqual(unlinked_labels.get("toggle_x_post"), "⚫ X 포스트")
+
         asyncio.run(_verify_view())
 
     def test_11_web_ui_preview_sends_x_embed(self) -> None:
@@ -615,6 +635,93 @@ class TestXIntegrationSuite(unittest.TestCase):
                 sent_previews[0]["image_url"],
                 "https://pbs.twimg.com/media/banner123.jpg",
             )
+
+    def test_12_xlink_modal_without_cookies_and_public_fallback(self) -> None:
+        """[TC-12] X 쿠키 미설정 상태에서도 공개 API 폴백으로 /x연동(XLinkModal) 방송인 추가가 정상 작동하는지 검증"""
+        mock_fx_resp = MagicMock()
+        mock_fx_resp.status_code = 200
+        mock_fx_resp.json.return_value = {
+            "code": 200,
+            "user": {
+                "id": "777888999",
+                "screen_name": "shizukitoa",
+                "name": "시즈키 토아",
+                "avatar_url": "https://pbs.twimg.com/profile_images/99/toa_normal.jpg",
+            },
+        }
+
+        with patch("collectors.twitter_x._build_x_cookies", return_value={}), \
+             patch("collectors.twitter_x.requests.get", return_value=mock_fx_resp):
+            info = tx.extract_x_user_info("@shizukitoa", None, None, True)
+            self.assertIsNotNone(info)
+            assert info is not None
+            self.assertEqual(info["user_id"], "777888999")
+            self.assertEqual(info["screen_name"], "shizukitoa")
+            self.assertEqual(info["name"], "시즈키 토아")
+            self.assertTrue(info["profile_image_url"].endswith("_400x400.jpg"))
+
+        # XLinkModal.on_submit 검증 (쿠키 미설정 시에도 차단되지 않고 저장되어야 함)
+        saved_guild_streamers: list[dict] = []
+
+        def _fake_save_guild(guild_id, guild_name=None, guild_global=None, guild_streamers=None, channel_webhooks=None):
+            if guild_streamers is not None:
+                saved_guild_streamers.extend(guild_streamers)
+
+        async def _run_modal_submit() -> None:
+            fake_ch = MagicMock()
+            fake_ch.id = 987654321
+            fake_ch.name = "방송카페알림"
+            fake_ch.mention = "#방송카페알림"
+
+            existing_st = {
+                "id": "st_157d6aea",
+                "enabled": True,
+                "name": "시즈키 토아",
+                "x_screen_name": "",
+                "custom_webhook_url": "https://discord.com/api/webhooks/111/222",
+            }
+            modal = discord_bot.XLinkModal(
+                guild_id="1310839027594694696",
+                guild_name="개인용",
+                target_channel=fake_ch,
+                existing_streamer=existing_st,
+            )
+            modal.x_handle_input._value = "@shizukitoa"
+            modal.custom_name_input._value = "시즈키 토아"
+
+            fake_interaction = MagicMock()
+            fake_interaction.response.defer = unittest.mock.AsyncMock()
+            fake_interaction.followup.send = unittest.mock.AsyncMock()
+
+            with patch(
+                "bot.discord_bot.load_guild_settings",
+                return_value={"global": {}, "streamers": [existing_st]},
+            ), patch(
+                "bot.discord_bot._build_x_cookies", return_value={}
+            ), patch(
+                "bot.discord_bot.extract_x_user_info",
+                return_value={
+                    "user_id": "777888999",
+                    "screen_name": "shizukitoa",
+                    "name": "시즈키 토아",
+                    "profile_image_url": "https://pbs.twimg.com/profile_images/99/toa_400x400.jpg",
+                },
+            ), patch(
+                "bot.discord_bot._ensure_channel_webhook",
+                new=unittest.mock.AsyncMock(
+                    return_value="https://discord.com/api/webhooks/111/222"
+                ),
+            ), patch(
+                "bot.discord_bot.save_guild_settings", side_effect=_fake_save_guild
+            ):
+                await modal.on_submit(fake_interaction)
+                self.assertEqual(len(saved_guild_streamers), 1)
+                self.assertEqual(saved_guild_streamers[0]["x_screen_name"], "shizukitoa")
+                self.assertEqual(saved_guild_streamers[0]["x_user_id"], "777888999")
+                self.assertTrue(saved_guild_streamers[0]["notify_x_post"])
+                fake_interaction.followup.send.assert_called_once()
+
+        asyncio.run(_run_modal_submit())
 
 
 if __name__ == "__main__":

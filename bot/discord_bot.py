@@ -20,6 +20,7 @@ from collectors.chzzk import CHZZK_ICON_URL, extract_chzzk_channel_info
 from collectors.naver_cafe import _build_cookies, extract_cafe_info_from_url
 from collectors.twitter_x import (
     XCookieExpiredError,
+    _build_x_cookies,
     extract_x_user_info,
     parse_x_screen_name,
 )
@@ -326,6 +327,7 @@ class StreamerConfigView(discord.ui.View):
         if not st:
             return
 
+        has_x = bool((st.get("x_screen_name") or "").strip())
         mapping = [
             ("toggle_open", "notify_chzzk_open", True, "방송 시작"),
             ("toggle_close", "notify_chzzk_close", False, "방송 종료"),
@@ -344,7 +346,10 @@ class StreamerConfigView(discord.ui.View):
                 continue
             for cid, key, default_val, label_base in mapping:
                 if child.custom_id == cid:
-                    is_on = bool(st.get(key, default_val))
+                    if key.startswith("notify_x_") and not has_x:
+                        is_on = False
+                    else:
+                        is_on = bool(st.get(key, default_val))
                     child.style = (
                         discord.ButtonStyle.success if is_on else discord.ButtonStyle.secondary
                     )
@@ -368,6 +373,22 @@ class StreamerConfigView(discord.ui.View):
                 "⚠️ 해당 방송인 정보를 찾을 수 없습니다 (이미 삭제되었을 수 있습니다).",
                 ephemeral=True,
             )
+            return
+
+        # 아직 X 계정이 연동되지 않은 상태에서 X 버튼을 누르면 즉시 X 연동 모달을 띄움
+        if key.startswith("notify_x_") and not (st.get("x_screen_name") or "").strip():
+            target_ch = (
+                interaction.channel
+                if isinstance(interaction.channel, discord.TextChannel)
+                else None
+            )
+            modal = XLinkModal(
+                guild_id=self.guild_id,
+                guild_name=self.guild_name,
+                target_channel=target_ch,
+                existing_streamer=st,
+            )
+            await interaction.response.send_modal(modal)
             return
 
         st[key] = not bool(st.get(key, default_val))
@@ -705,7 +726,7 @@ class XCookieModal(discord.ui.Modal, title="🔐 X(구 트위터) 부계정 쿠�
         err_detail = ""
         try:
             test_info = await asyncio.to_thread(
-                extract_x_user_info, "X", auth_token, ct0
+                extract_x_user_info, "X", auth_token, ct0, False
             )
             verified = bool(test_info and test_info.get("user_id"))
         except XCookieExpiredError as e:
@@ -754,7 +775,7 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
         self,
         guild_id: str,
         guild_name: str,
-        target_channel: discord.TextChannel,
+        target_channel: Optional[discord.TextChannel],
         existing_streamer: Optional[dict[str, Any]] = None,
         initial_name: str = "",
     ) -> None:
@@ -786,26 +807,25 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
 
         g_data = load_guild_settings(self.guild_id, self.guild_name)
         g_cfg = g_data.get("global") or {}
-        x_auth_token = (g_cfg.get("x_auth_token") or config.X_AUTH_TOKEN or "").strip() or None
-        x_ct0 = (g_cfg.get("x_ct0") or config.X_CT0 or "").strip() or None
-
-        if not x_auth_token or not x_ct0:
-            await interaction.followup.send(
-                "⚠️ **X(트위터) 부계정 로그인 쿠키(`auth_token`, `ct0`)가 아직 설정되지 않았습니다.**\n"
-                "먼저 `/x쿠키설정` 명령어(또는 웹 대시보드 상단 설정)에서 X 부계정 쿠키를 등록한 뒤 다시 시도해 주세요!"
-            )
-            return
+        effective_cookies = _build_x_cookies(
+            g_cfg.get("x_auth_token"), g_cfg.get("x_ct0")
+        )
+        has_x_cookies = bool(effective_cookies)
+        cookie_expired_warn = False
 
         try:
             info = await asyncio.to_thread(
-                extract_x_user_info, raw_x, x_auth_token, x_ct0
+                extract_x_user_info,
+                raw_x,
+                effective_cookies.get("auth_token"),
+                effective_cookies.get("ct0"),
+                True,
             )
         except XCookieExpiredError:
-            await interaction.followup.send(
-                "❌ **X(트위터) 로그인 쿠키가 만료되었거나 유효하지 않습니다.**\n"
-                "`/x쿠키설정` 명령어로 최신 `auth_token`과 `ct0` 쿠키를 다시 등록해 주세요."
+            cookie_expired_warn = True
+            info = await asyncio.to_thread(
+                extract_x_user_info, raw_x, None, None, True
             )
-            return
 
         if not info:
             await interaction.followup.send(
@@ -814,18 +834,22 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
             )
             return
 
-        try:
-            webhook_url = await _ensure_channel_webhook(
-                self.target_channel, self.guild_id, self.guild_name
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                f"❌ 봇에게 {self.target_channel.mention} 채널의 **웹후크 관리하기(Manage Webhooks)** 권한이 없습니다."
-            )
-            return
-        except Exception as e:
-            await interaction.followup.send(f"❌ 채널 웹후크 생성 중 오류가 발생했습니다: `{e}`")
-            return
+        webhook_url = ""
+        if self.target_channel is not None:
+            try:
+                webhook_url = await _ensure_channel_webhook(
+                    self.target_channel, self.guild_id, self.guild_name
+                )
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    f"❌ 봇에게 {self.target_channel.mention} 채널의 **웹후크 관리하기(Manage Webhooks)** 권한이 없습니다."
+                )
+                return
+            except Exception as e:
+                await interaction.followup.send(f"❌ 채널 웹후크 생성 중 오류가 발생했습니다: `{e}`")
+                return
+        elif self.existing_streamer and self.existing_streamer.get("custom_webhook_url"):
+            webhook_url = str(self.existing_streamer.get("custom_webhook_url"))
 
         streamers: list[dict[str, Any]] = g_data.get("streamers") or []
         x_uid = info["user_id"]
@@ -853,15 +877,19 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
             target_st["notify_x_post"] = True
             target_st.setdefault("notify_x_reply", False)
             target_st.setdefault("notify_x_retweet", False)
-            if not target_st.get("custom_webhook_url"):
+            if not target_st.get("custom_webhook_url") and webhook_url:
                 target_st["custom_webhook_url"] = webhook_url
-                target_st["discord_channel_id"] = str(self.target_channel.id)
-                target_st["discord_channel_name"] = f"#{self.target_channel.name}"
+                if self.target_channel is not None:
+                    target_st["discord_channel_id"] = str(self.target_channel.id)
+                    target_st["discord_channel_name"] = f"#{self.target_channel.name}"
             action_msg = (
                 f"🐦 **{target_st['name']}** 방송인에 X(트위터) 알림(`@{x_sname}`)이 연동되었습니다!"
             )
         else:
             st_name = custom_name or x_nick
+            ch_id_str = str(self.target_channel.id) if self.target_channel else ""
+            ch_name_str = f"#{self.target_channel.name}" if self.target_channel else "기본채널"
+            ch_mention_str = self.target_channel.mention if self.target_channel else "현재"
             target_st = {
                 "id": generate_streamer_id(),
                 "enabled": True,
@@ -878,8 +906,8 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
                 "x_user_id": x_uid,
                 "x_profile_image_url": x_img,
                 "custom_webhook_url": webhook_url,
-                "discord_channel_id": str(self.target_channel.id),
-                "discord_channel_name": f"#{self.target_channel.name}",
+                "discord_channel_id": ch_id_str,
+                "discord_channel_name": ch_name_str,
                 "notify_chzzk_open": False,
                 "notify_chzzk_close": False,
                 "notify_chzzk_title": False,
@@ -897,7 +925,18 @@ class XLinkModal(discord.ui.Modal, title="🐦 X(구 트위터) 알림 연동"):
             streamers.append(target_st)
             action_msg = (
                 f"🎉 **{st_name}** (`@{x_sname}`) X(트위터) 단독 알림이 "
-                f"{self.target_channel.mention} 채널에 등록되었습니다!"
+                f"{ch_mention_str} 채널에 등록되었습니다!"
+            )
+
+        if not has_x_cookies:
+            action_msg += (
+                "\n💡 *(참고: 실시간 X 포스트 수집을 위해 `/x쿠키설정` 명령어로 "
+                "X 부계정 쿠키 `auth_token`, `ct0`를 등록해 주세요)*"
+            )
+        elif cookie_expired_warn:
+            action_msg += (
+                "\n⚠️ *(주의: 현재 등록된 X 쿠키가 만료되어 공개 프로필로 연동했습니다. "
+                "`/x쿠키설정`으로 최신 쿠키를 갱신해 주세요)*"
             )
 
         save_guild_settings(self.guild_id, guild_name=self.guild_name, guild_streamers=streamers)
@@ -1145,6 +1184,20 @@ class NotifierDiscordBot(discord.Client):
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
+        self.tree.on_error = self._on_tree_error
+
+    async def _on_tree_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        log_event(f"[디스코드 봇 명령어 오류] {error}")
+        try:
+            msg = f"❌ 명령어 처리 중 오류가 발생했습니다: `{error}`"
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:
+            pass
 
     async def setup_hook(self) -> None:
         try:
