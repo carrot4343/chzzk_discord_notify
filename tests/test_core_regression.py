@@ -8,9 +8,11 @@ import unittest
 from unittest.mock import patch
 
 from collectors import chzzk, naver_cafe
+from collectors.twitter_x import XCookieExpiredError
 import main
 from notifiers.discord_webhook import validate_discord_webhook_url
 from utils.state_manager import get_default_streamer_state
+import web_ui
 
 
 class TestCoreRegressionSuite(unittest.TestCase):
@@ -230,6 +232,108 @@ class TestCoreRegressionSuite(unittest.TestCase):
             m_chzzk.assert_called_once()
             m_cafe.assert_called_once()
             m_x.assert_called_once()
+
+    def test_05_send_preview_for_streamer_platform_filtering(self) -> None:
+        """[Core-05] send_preview_for_streamer(platform=...)의 치지직(LIVE/OFFLINE)·카페·X 단독 조회 분기 및 오류 안내 검증"""
+        full_streamer = {
+            "id": "st_preview_all",
+            "name": "탬탬버린",
+            "chzzk_channel_id": "a7e175625fdea5a7d98428302b7aa57f",
+            "cafe_club_id": "28993571",
+            "cafe_member_key": "mkey_123",
+            "x_screen_name": "2chamcham2",
+            "x_user_id": "555",
+            "custom_webhook_url": "https://discord.com/api/webhooks/111/preview",
+        }
+        g_cfg = {
+            "naver_nid_aut": "aut",
+            "naver_nid_ses": "ses",
+            "x_auth_token": "tok_x",
+            "x_ct0": "ct0_x",
+        }
+        sent_cards: list[dict] = []
+
+        def _capture_send(**kwargs):
+            sent_cards.append(kwargs)
+            return True
+
+        # 1) platform="chzzk" (오프라인 CLOSE + 온라인 OPEN): 카페/X 수집기는 호출되지 않아야 함
+        detail_offline = {
+            "status": "CLOSE",
+            "liveTitle": "어제 방송",
+            "liveCategoryValue": "Just Chatting",
+            "channel": {"channelName": "탬탬버린", "channelImageUrl": "https://nng-phinf.pstatic.net/p.png"},
+        }
+        detail_live = {
+            **detail_offline,
+            "status": "OPEN",
+            "liveTitle": "지금 뱅온!",
+            "liveCategoryValue": "마인크래프트",
+        }
+        with patch.object(web_ui, "fetch_chzzk_live_detail", side_effect=[detail_offline, detail_live]), \
+             patch.object(web_ui, "fetch_member_articles") as m_cafe_art, \
+             patch.object(web_ui, "fetch_x_user_tweets") as m_x_tw, \
+             patch.object(web_ui, "send_discord_notification", side_effect=_capture_send):
+            ok_off, msg_off = web_ui.send_preview_for_streamer(dict(full_streamer), g_cfg, platform="chzzk")
+            ok_on, msg_on = web_ui.send_preview_for_streamer(dict(full_streamer), g_cfg, platform="chzzk")
+            self.assertTrue(ok_off)
+            self.assertIn("오프라인 (OFFLINE)", msg_off)
+            self.assertIn("오프라인 상태입니다", sent_cards[0]["content"])
+            self.assertTrue(ok_on)
+            self.assertIn("방송 중 (LIVE)", msg_on)
+            self.assertIn("현재 방송 중입니다", sent_cards[1]["content"])
+            m_cafe_art.assert_not_called()
+            m_x_tw.assert_not_called()
+
+        # 2) platform="cafe": 최신 게시글 + 댓글만 2건 전송, 치지직/X 미호출
+        sent_cards.clear()
+        mock_articles = [{"articleId": 101, "subject": "공지 글", "writernickname": "탬탬버린"}]
+        mock_comments = [{"commentId": 501, "articleId": 101, "content": "댓글 내용", "article": {"subject": "공지 글"}}]
+        with patch.object(web_ui, "fetch_chzzk_live_detail") as m_chzzk, \
+             patch.object(web_ui, "fetch_member_articles", return_value=mock_articles), \
+             patch.object(web_ui, "fetch_member_comments", return_value=mock_comments), \
+             patch.object(web_ui, "fetch_article_body_summary", return_value=("본문 요약", None)), \
+             patch.object(web_ui, "fetch_x_user_tweets") as m_x_tw, \
+             patch.object(web_ui, "send_discord_notification", side_effect=_capture_send):
+            ok_cafe, msg_cafe = web_ui.send_preview_for_streamer(dict(full_streamer), g_cfg, platform="cafe")
+            self.assertTrue(ok_cafe)
+            self.assertIn("2건", msg_cafe)
+            self.assertEqual(len(sent_cards), 2)
+            self.assertIn("공지 글", sent_cards[0]["embed_title"])
+            self.assertIn("댓글 내용", sent_cards[1]["embed_description"])
+            m_chzzk.assert_not_called()
+            m_x_tw.assert_not_called()
+
+        # 3) platform="x": 쿠키 미설정 안내 / 정상 조회 / 쿠키 만료 예외 분기
+        sent_cards.clear()
+        with patch.object(web_ui, "_build_x_cookies", return_value={}):
+            ok_no_cookie, msg_no_cookie = web_ui.send_preview_for_streamer(dict(full_streamer), {}, platform="x")
+            self.assertFalse(ok_no_cookie)
+            self.assertIn("/트위터쿠키설정", msg_no_cookie)
+
+        with patch.object(web_ui, "fetch_chzzk_live_detail") as m_chzzk, \
+             patch.object(web_ui, "fetch_member_articles") as m_cafe_art, \
+             patch.object(web_ui, "_build_x_cookies", return_value={"auth_token": "tok_x", "ct0": "ct0_x"}), \
+             patch.object(web_ui, "fetch_x_user_tweets", return_value=[{"id": "2003", "text": "X 최신 포스트"}]), \
+             patch.object(web_ui, "send_discord_notification", side_effect=_capture_send):
+            ok_x, msg_x = web_ui.send_preview_for_streamer(dict(full_streamer), g_cfg, platform="x")
+            self.assertTrue(ok_x)
+            self.assertIn("최신 X 포스트", msg_x)
+            self.assertEqual(len(sent_cards), 1)
+            m_chzzk.assert_not_called()
+            m_cafe_art.assert_not_called()
+
+        with patch.object(web_ui, "_build_x_cookies", return_value={"auth_token": "tok_x", "ct0": "ct0_x"}), \
+             patch.object(web_ui, "fetch_x_user_tweets", side_effect=XCookieExpiredError("expired")):
+            ok_exp, msg_exp = web_ui.send_preview_for_streamer(dict(full_streamer), g_cfg, platform="x")
+            self.assertFalse(ok_exp)
+            self.assertIn("쿠키가 만료", msg_exp)
+
+        # 4) 미연동 상태에서 플랫폼별 확인 클릭 시 연동 안내 반환
+        unlinked = {"id": "st_empty", "name": "미연동", "custom_webhook_url": "https://discord.com/api/webhooks/111/preview"}
+        self.assertFalse(web_ui.send_preview_for_streamer(unlinked, g_cfg, platform="chzzk")[0])
+        self.assertFalse(web_ui.send_preview_for_streamer(unlinked, g_cfg, platform="cafe")[0])
+        self.assertFalse(web_ui.send_preview_for_streamer(unlinked, g_cfg, platform="x")[0])
 
 
 if __name__ == "__main__":

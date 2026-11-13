@@ -1,5 +1,5 @@
 r"""
-X(구 트위터) 디스코드 알림 연동 통합 테스트 스위트 (총 11개 핵심 시나리오 검증)
+X(구 트위터) 디스코드 알림 연동 통합 테스트 스위트 (총 15개 핵심 시나리오 검증)
 실행 방법: .\venv\Scripts\python.exe -m unittest -v tests/test_x_integration.py
 """
 
@@ -754,6 +754,153 @@ class TestXIntegrationSuite(unittest.TestCase):
                 fake_interaction.followup.send.assert_called_once()
 
         asyncio.run(_run_modal_submit())
+
+    def test_13_config_view_platform_check_buttons_and_permissions(self) -> None:
+        """[TC-13] Row 3 확인 버튼 3종(치지직/카페/X) 클릭 시 해당 플랫폼만 검증하고 비관리자는 차단하는지 검증"""
+        sample_st = {
+            "id": "st_check_1",
+            "enabled": True,
+            "name": "탬탬버린",
+            "chzzk_channel_id": "a7e175625fdea5a7d98428302b7aa57f",
+            "cafe_club_id": "30688884",
+            "cafe_member_key": "member_key_1",
+            "x_screen_name": "2chamcham2",
+        }
+        g_cfg = {"x_auth_token": "tok", "x_ct0": "ct0"}
+
+        async def _run() -> None:
+            with patch(
+                "bot.discord_bot.load_guild_settings",
+                return_value={"global": g_cfg, "streamers": [sample_st]},
+            ):
+                view = discord_bot.StreamerConfigView("111", "테스트서버", "st_check_1")
+
+                for btn, expected_platform in [
+                    (view.btn_check_chzzk, "chzzk"),
+                    (view.btn_check_cafe, "cafe"),
+                    (view.btn_check_x, "x"),
+                ]:
+                    inter = MagicMock()
+                    inter.user.guild_permissions.manage_guild = True
+                    inter.response.defer = unittest.mock.AsyncMock()
+                    inter.followup.send = unittest.mock.AsyncMock()
+
+                    with patch(
+                        "bot.discord_bot.send_preview_for_streamer",
+                        return_value=(True, f"✅ {expected_platform} 확인 완료"),
+                    ) as mock_preview:
+                        await btn.callback(inter)
+                        inter.response.defer.assert_awaited_once_with(ephemeral=True)
+                        mock_preview.assert_called_once_with(
+                            sample_st, g_cfg, "서버:테스트서버", expected_platform
+                        )
+                        inter.followup.send.assert_awaited_once_with(
+                            f"✅ {expected_platform} 확인 완료", ephemeral=True
+                        )
+
+                # 서버 관리하기 권한이 없는 일반 유저는 실행 차단
+                non_admin = MagicMock()
+                non_admin.user.guild_permissions.manage_guild = False
+                non_admin.response.send_message = unittest.mock.AsyncMock()
+                with patch("bot.discord_bot.send_preview_for_streamer") as mock_preview:
+                    await view.btn_check_x.callback(non_admin)
+                    mock_preview.assert_not_called()
+                    non_admin.response.send_message.assert_awaited_once()
+                    self.assertIn(
+                        "서버 관리하기",
+                        non_admin.response.send_message.call_args.args[0],
+                    )
+
+        asyncio.run(_run())
+
+    def test_14_unlinked_cafe_and_x_buttons_auto_open_modals(self) -> None:
+        """[TC-14] 카페 또는 X 미연동 상태에서 알림 토글 버튼 클릭 시 각 연동 모달이 자동 실행되는지 검증"""
+        unlinked_st = {
+            "id": "st_unlinked_modal",
+            "enabled": True,
+            "name": "시즈키 토아",
+            "cafe_club_id": "",
+            "cafe_member_key": "",
+            "x_screen_name": "",
+        }
+
+        async def _run() -> None:
+            with patch(
+                "bot.discord_bot.load_guild_settings",
+                return_value={"global": {}, "streamers": [unlinked_st]},
+            ):
+                view = discord_bot.StreamerConfigView("111", "테스트서버", "st_unlinked_modal")
+
+                cafe_inter = MagicMock()
+                cafe_inter.user.guild_permissions.manage_guild = True
+                cafe_inter.channel = MagicMock(spec=discord_bot.discord.TextChannel)
+                cafe_inter.response.send_modal = unittest.mock.AsyncMock()
+                await view.btn_cafe_art.callback(cafe_inter)
+                cafe_inter.response.send_modal.assert_awaited_once()
+                sent_cafe_modal = cafe_inter.response.send_modal.call_args.args[0]
+                self.assertIsInstance(sent_cafe_modal, discord_bot.CafeLinkModal)
+                self.assertEqual(sent_cafe_modal.existing_streamer["id"], "st_unlinked_modal")
+
+                x_inter = MagicMock()
+                x_inter.user.guild_permissions.manage_guild = True
+                x_inter.channel = MagicMock(spec=discord_bot.discord.TextChannel)
+                x_inter.response.send_modal = unittest.mock.AsyncMock()
+                await view.btn_x_post.callback(x_inter)
+                x_inter.response.send_modal.assert_awaited_once()
+                sent_x_modal = x_inter.response.send_modal.call_args.args[0]
+                self.assertIsInstance(sent_x_modal, discord_bot.XLinkModal)
+                self.assertEqual(sent_x_modal.existing_streamer["id"], "st_unlinked_modal")
+
+        asyncio.run(_run())
+
+    def test_15_twitter_alias_slash_commands_open_same_modals(self) -> None:
+        """[TC-15] /x연동·/트위터연동 및 /x쿠키설정·/트위터쿠키설정 명령어가 동일한 모달을 여는지 검증"""
+        async def _run() -> None:
+            mock_g_data = {
+                "global": {"x_auth_token": "tok_saved", "x_ct0": "ct0_saved"},
+                "streamers": [{"id": "st_1", "name": "탬탬버린"}],
+            }
+
+            def _make_admin_interaction():
+                inter = MagicMock()
+                inter.guild = MagicMock()
+                inter.guild.name = "테스트서버"
+                inter.guild_id = 111
+                inter.user.guild_permissions.manage_guild = True
+                inter.channel = MagicMock(spec=discord_bot.discord.TextChannel)
+                inter.response.send_modal = unittest.mock.AsyncMock()
+                return inter
+
+            with patch("bot.discord_bot.load_guild_settings", return_value=mock_g_data):
+                # 1) /x연동 vs /트위터연동
+                inter_x = _make_admin_interaction()
+                inter_tw = _make_admin_interaction()
+                await discord_bot.cmd_link_x.callback(inter_x, 이름="탬탬버린")
+                await discord_bot.cmd_link_twitter.callback(inter_tw, 이름="탬탬버린")
+
+                modal_x = inter_x.response.send_modal.call_args.args[0]
+                modal_tw = inter_tw.response.send_modal.call_args.args[0]
+                self.assertIsInstance(modal_x, discord_bot.XLinkModal)
+                self.assertIsInstance(modal_tw, discord_bot.XLinkModal)
+                self.assertEqual(modal_x.existing_streamer["id"], "st_1")
+                self.assertEqual(modal_tw.existing_streamer["id"], "st_1")
+
+                # 2) /x쿠키설정 vs /트위터쿠키설정
+                inter_xc = _make_admin_interaction()
+                inter_twc = _make_admin_interaction()
+                await discord_bot.cmd_set_x_cookies.callback(inter_xc)
+                await discord_bot.cmd_set_twitter_cookies.callback(inter_twc)
+
+                modal_xc = inter_xc.response.send_modal.call_args.args[0]
+                modal_twc = inter_twc.response.send_modal.call_args.args[0]
+                self.assertIsInstance(modal_xc, discord_bot.XCookieModal)
+                self.assertIsInstance(modal_twc, discord_bot.XCookieModal)
+                self.assertEqual(modal_xc.x_auth_token_input.default, "tok_saved")
+                self.assertEqual(modal_twc.x_auth_token_input.default, "tok_saved")
+                self.assertEqual(modal_xc.x_ct0_input.default, "ct0_saved")
+                self.assertEqual(modal_twc.x_ct0_input.default, "ct0_saved")
+
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":
