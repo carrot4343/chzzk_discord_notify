@@ -16,31 +16,61 @@ from discord import app_commands
 import requests
 
 import config
-from collectors.chzzk import CHZZK_ICON_URL, extract_chzzk_channel_info
-from collectors.naver_cafe import _build_cookies, extract_cafe_info_from_url
+from collectors.chzzk import (
+    CHZZK_ICON_URL,
+    extract_chzzk_channel_info,
+    fetch_chzzk_live_detail,
+)
+from collectors.naver_cafe import (
+    NaverCookieExpiredError,
+    _build_cookies,
+    extract_cafe_info_from_url,
+    fetch_member_articles,
+    fetch_member_comments,
+)
 from collectors.twitter_x import (
     XCookieExpiredError,
     _build_x_cookies,
     extract_x_user_info,
+    fetch_x_user_tweets,
     parse_x_screen_name,
 )
+from notifiers.discord_webhook import check_discord_webhook_alive
 from utils.settings_manager import (
     generate_streamer_id,
     load_guild_settings,
     log_event,
     save_guild_settings,
 )
+from utils.state_manager import get_streamer_state, load_state
 from web_ui import send_preview_for_streamer
 
 WEBHOOK_DEFAULT_NAME = "치지직·카페 알림봇"
 
 _bot_check_now_cb: Optional[Callable[[], None]] = None
+_monitor_heartbeat: dict[str, Any] = {
+    "last_cycle_ts": 0.0,
+    "last_checked_count": 0,
+    "poll_interval_seconds": 60,
+}
 
 
 def set_bot_check_now_callback(cb: Callable[[], None]) -> None:
     """메인 순찰 루프의 즉시 점검 함수를 봇에 연결합니다."""
     global _bot_check_now_cb
     _bot_check_now_cb = cb
+
+
+def record_monitor_heartbeat(checked_count: int, poll_interval_seconds: int = 60) -> None:
+    """백그라운드 순찰 루프 완료 시각과 점검 건수를 기록합니다."""
+    _monitor_heartbeat["last_cycle_ts"] = time.time()
+    _monitor_heartbeat["last_checked_count"] = int(checked_count)
+    _monitor_heartbeat["poll_interval_seconds"] = max(15, int(poll_interval_seconds or 60))
+
+
+def get_monitor_heartbeat() -> dict[str, Any]:
+    """기록된 백그라운드 순찰 엔진 하트비트 정보를 반환합니다."""
+    return dict(_monitor_heartbeat)
 
 
 _chzzk_search_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -2089,28 +2119,425 @@ async def cmd_preview_streamer(interaction: discord.Interaction, 이름: str) ->
     await interaction.followup.send(msg if ok else f"⚠️ {msg}")
 
 
-@bot_client.tree.command(
-    name="지금점검",
-    description="순찰 주기를 기다리지 않고 즉시 전체 방송인의 최신 상태를 점검합니다.",
-)
-@app_commands.guild_only()
-@app_commands.default_permissions(manage_guild=True)
-async def cmd_check_now(interaction: discord.Interaction) -> None:
+def _inspect_global_cookies_sync(g_cfg: dict[str, Any]) -> dict[str, str]:
+    """서버 공통 인증 쿠키(네이버 NID_AUT/NID_SES, X auth_token/ct0)의 설정 및 유효성을 점검합니다."""
+    nid_aut = (g_cfg.get("naver_nid_aut") or "").strip()
+    nid_ses = (g_cfg.get("naver_nid_ses") or "").strip()
+    if nid_aut and nid_ses:
+        ok, msg, channels = _fetch_chzzk_followings_sync(nid_aut, nid_ses, set())
+        if ok:
+            naver_status = f"🟢 정상 (팔로우 {len(channels)}개 확인)"
+        else:
+            short_msg = str(msg).splitlines()[0][:60]
+            naver_status = f"❌ 만료·오류 ({short_msg})"
+    else:
+        naver_status = "➖ 미설정 (공개 글만 수집)"
+
+    x_cookies = _build_x_cookies(g_cfg.get("x_auth_token"), g_cfg.get("x_ct0"))
+    if not x_cookies:
+        x_status = "➖ 미설정"
+    else:
+        try:
+            info = extract_x_user_info(
+                "X",
+                x_cookies.get("auth_token"),
+                x_cookies.get("ct0"),
+                False,
+            )
+            if info and info.get("user_id"):
+                has_local = bool(
+                    (g_cfg.get("x_auth_token") or "").strip()
+                    and (g_cfg.get("x_ct0") or "").strip()
+                )
+                x_status = (
+                    "🟢 정상 (GraphQL 인증)"
+                    if has_local
+                    else "🟢 정상 (시스템 폴백 쿠키)"
+                )
+            else:
+                x_status = "❌ 만료·오류 (계정 조회 실패)"
+        except XCookieExpiredError as e:
+            x_status = f"❌ 만료·오류 ({e})"
+        except Exception as e:
+            x_status = f"❌ 만료·오류 ({e})"
+
+    return {"naver": naver_status, "x": x_status}
+
+
+def _inspect_streamer_health_sync(
+    st: dict[str, Any], g_cfg: dict[str, Any], st_state: dict[str, Any]
+) -> dict[str, Any]:
+    """개별 방송인의 설정 사각지대, 플랫폼별 수집기 응답, state.json 기준점을 점검합니다."""
+    warnings: list[str] = []
+    if not st.get("enabled", True):
+        warnings.append("⏸️ 전체 알림 감시 스위치가 일시정지(OFF) 상태입니다.")
+
+    cid = (st.get("chzzk_channel_id") or "").strip()
+    club_id = (st.get("cafe_club_id") or "").strip()
+    member_key = (st.get("cafe_member_key") or "").strip()
+    x_sname = (st.get("x_screen_name") or "").strip()
+    x_uid = (st.get("x_user_id") or "").strip()
+
+    # 1) 치지직 점검
+    if cid:
+        ch_flags = []
+        if st.get("notify_chzzk_open", True):
+            ch_flags.append("뱅온")
+        if st.get("notify_chzzk_close", False):
+            ch_flags.append("뱅종")
+        if st.get("notify_chzzk_title", True):
+            ch_flags.append("방제")
+        if st.get("notify_chzzk_category", True):
+            ch_flags.append("카테고리")
+        if st.get("notify_chzzk_community", True):
+            ch_flags.append("커뮤")
+        if not ch_flags:
+            warnings.append("📺 치지직 연동됨 (세부 알림 항목이 모두 꺼져 있음)")
+
+        detail = fetch_chzzk_live_detail(cid)
+        ch_state = st_state.get("chzzk") or {}
+        if detail:
+            is_open = detail.get("status") == "OPEN"
+            live_badge = "🔴 LIVE" if is_open else "⚫ OFFLINE"
+            init_badge = "초기화됨" if ch_state.get("initialized") else "대기 중"
+            flags_str = ", ".join(ch_flags) if ch_flags else "꺼짐"
+            chzzk_summary = (
+                f"🟢 수집 정상 (`{live_badge}` | 기준점 {init_badge} | 항목: {flags_str})"
+            )
+        else:
+            chzzk_summary = "❌ 채널 조회 실패 (치지직 API 응답 없음)"
+            warnings.append("📺 치지직 API 조회 실패")
+    else:
+        chzzk_summary = "➖ 미연동"
+
+    # 2) 네이버 카페 점검
+    if club_id and member_key:
+        if not st.get("notify_cafe_article", True) and not st.get(
+            "notify_cafe_comment", True
+        ):
+            warnings.append("☕ 네이버 카페 연동됨 (게시글·댓글 알림이 모두 꺼져 있음)")
+
+        cookies = _build_cookies(
+            g_cfg.get("naver_nid_aut"), g_cfg.get("naver_nid_ses")
+        )
+        cafe_state = st_state.get("naver_cafe") or {}
+        try:
+            articles = fetch_member_articles(club_id, member_key, cookies)
+            comments = fetch_member_comments(club_id, member_key, cookies)
+            art_base = cafe_state.get("last_article_id")
+            if art_base is None and articles:
+                art_base = articles[0].get("articleid") or articles[0].get("articleId")
+            cmt_base = cafe_state.get("last_comment_id")
+            if cmt_base is None and comments:
+                cmt_base = comments[0].get("commentId") or comments[0].get("commentid")
+            art_str = f"#{art_base}" if art_base else "없음"
+            cmt_str = f"#{cmt_base}" if cmt_base else "없음"
+            cafe_summary = f"🟢 수집 정상 (기준점: 글 {art_str}, 댓글 {cmt_str} 이후 대기)"
+        except NaverCookieExpiredError:
+            cafe_summary = "❌ 네이버 쿠키 만료됨 (`/쿠키설정` 필요)"
+            warnings.append("☕ 네이버 로그인 쿠키가 만료되어 회원 전용 카페 수집 불가")
+        except Exception as e:
+            cafe_summary = f"❌ 조회 오류 ({str(e)[:40]})"
+            warnings.append("☕ 네이버 카페 수집 오류")
+    else:
+        cafe_summary = "➖ 미연동"
+
+    # 3) X(트위터) 점검
+    if x_sname or x_uid:
+        if (
+            not st.get("notify_x_post", True)
+            and not st.get("notify_x_reply", False)
+            and not st.get("notify_x_retweet", False)
+        ):
+            warnings.append("🐦 X(트위터) 연동됨 (포스트·답글·리트윗 알림이 모두 꺼져 있음)")
+
+        x_cookies = _build_x_cookies(g_cfg.get("x_auth_token"), g_cfg.get("x_ct0"))
+        if not x_cookies:
+            x_summary = "⚠️ X 쿠키 미설정 (`/트위터쿠키설정` 필요)"
+            warnings.append("🐦 X 부계정 쿠키 미설정으로 타임라인 자동 수집 불가")
+        else:
+            x_state = st_state.get("twitter_x") or {}
+            try:
+                resolved_uid = x_uid
+                if not resolved_uid and x_sname:
+                    x_info = extract_x_user_info(
+                        x_sname,
+                        x_cookies.get("auth_token"),
+                        x_cookies.get("ct0"),
+                        True,
+                    )
+                    if x_info:
+                        resolved_uid = x_info.get("user_id") or ""
+                tweets = (
+                    fetch_x_user_tweets(
+                        user_id=resolved_uid,
+                        screen_name=x_sname,
+                        cookies=x_cookies,
+                        include_replies=bool(st.get("notify_x_reply", False)),
+                        force=True,
+                    )
+                    if resolved_uid
+                    else []
+                )
+                tw_base = x_state.get("last_tweet_id")
+                if tw_base is None and tweets:
+                    tw_base = tweets[0].get("id")
+                tw_str = f"#{tw_base}" if tw_base else "대기 중"
+                x_summary = f"🟢 수집 정상 (`@{x_sname}` | 기준점: {tw_str} 이후 대기)"
+            except XCookieExpiredError:
+                x_summary = "❌ X 쿠키 만료됨 (`/트위터쿠키설정` 필요)"
+                warnings.append("🐦 X(트위터) 로그인 쿠키 만료됨")
+            except Exception as e:
+                x_summary = f"❌ 조회 오류 ({str(e)[:40]})"
+                warnings.append("🐦 X(트위터) 수집 오류")
+    else:
+        x_summary = "➖ 미연동"
+
+    return {
+        "chzzk": chzzk_summary,
+        "cafe": cafe_summary,
+        "x": x_summary,
+        "warnings": warnings,
+    }
+
+
+async def _run_guild_alarm_inspection(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    시험알람발송: bool = True,
+) -> None:
+    """감시 엔진, 쿠키, 웹후크 생존(자동 복구), 수집기 기준점 및 시험 알람 발송을 종합 점검합니다."""
     err = _verify_admin_interaction(interaction)
     if err:
         await interaction.response.send_message(err, ephemeral=True)
         return
 
-    if not _bot_check_now_cb:
-        await interaction.response.send_message(
-            "⚠️ 순찰 루프가 아직 준비되지 않았습니다.", ephemeral=True
-        )
-        return
+    await interaction.response.defer(ephemeral=False)
 
-    threading.Thread(target=_bot_check_now_cb, daemon=True).start()
-    await interaction.response.send_message(
-        "🔄 **즉시 순찰을 시작했습니다!** 새로운 방송 시작·변경 사항이 있으면 등록된 채널로 즉시 알림이 전송됩니다."
+    if _bot_check_now_cb:
+        try:
+            await asyncio.to_thread(_bot_check_now_cb)
+        except Exception as e:
+            log_event(f"[알림점검 경고] 즉시 순찰 실행 중 예외: {e}")
+
+    guild_id = str(interaction.guild_id)
+    guild_name = interaction.guild.name if interaction.guild else guild_id
+    g_data = load_guild_settings(guild_id, guild_name)
+    g_cfg = g_data.get("global") or {}
+    streamers: list[dict[str, Any]] = g_data.get("streamers") or []
+    state = load_state()
+
+    if 이름:
+        targets = [
+            s
+            for s in streamers
+            if s.get("id") == 이름 or s.get("name") == 이름.strip()
+        ]
+        if not targets:
+            await interaction.followup.send(
+                f"❌ `{이름}` 방송인을 목록에서 찾을 수 없습니다. `/알림목록`을 확인해 주세요."
+            )
+            return
+    else:
+        targets = list(streamers)
+
+    cookie_report = await asyncio.to_thread(_inspect_global_cookies_sync, g_cfg)
+    hb = get_monitor_heartbeat()
+    last_ts = float(hb.get("last_cycle_ts") or 0.0)
+    interval = int(hb.get("poll_interval_seconds") or 60)
+    if last_ts > 0:
+        elapsed = max(0, int(time.time() - last_ts))
+        if elapsed <= interval * 3 + 30:
+            hb_text = f"🟢 정상 작동 중 (마지막 순찰: {elapsed}초 전 / 주기: {interval}초)"
+        else:
+            hb_text = f"⚠️ 순찰 지연 감지 (마지막 순찰: {elapsed}초 전 / 주기: {interval}초)"
+    else:
+        hb_text = "🟡 백그라운드 순찰 대기 중 (상태 데이터 점검 완료)"
+
+    has_issue = (
+        cookie_report["naver"].startswith("❌")
+        or cookie_report["x"].startswith("❌")
+        or hb_text.startswith("⚠️")
     )
+    guild_modified = False
+    streamer_reports: list[tuple[dict[str, Any], str, dict[str, Any], str]] = []
+
+    for st in targets:
+        webhook_url = (
+            st.get("custom_webhook_url")
+            or g_cfg.get("discord_webhook_url")
+            or ""
+        ).strip()
+        wh_alive, wh_reason = await asyncio.to_thread(
+            check_discord_webhook_alive, webhook_url
+        )
+        webhook_status = f"🟢 {wh_reason}" if wh_alive else f"❌ {wh_reason}"
+        extra_warnings: list[str] = []
+
+        if not wh_alive:
+            ch_id = st.get("discord_channel_id")
+            target_ch = (
+                interaction.guild.get_channel(int(ch_id))
+                if interaction.guild and ch_id and str(ch_id).isdigit()
+                else None
+            )
+            if target_ch is not None and isinstance(target_ch, discord.TextChannel):
+                try:
+                    repaired_url = await _ensure_channel_webhook(
+                        target_ch, guild_id, guild_name
+                    )
+                    st["custom_webhook_url"] = repaired_url
+                    wh_alive = True
+                    guild_modified = True
+                    webhook_status = "🛠️ 자동 복구 완료 (정상)"
+                    log_event(
+                        f"[디스코드 봇:{guild_name}] '{st.get('name', '방송인')}' 웹후크 자동 복구 완료"
+                    )
+                except Exception as repair_err:
+                    webhook_status = f"❌ 복구 실패 ({type(repair_err).__name__})"
+                    extra_warnings.append("🔗 채널 웹후크 자동 복구 실패 (봇 웹후크 권한 확인 필요)")
+            else:
+                extra_warnings.append("🔗 알림 채널 웹후크 오류 (채널 확인 필요)")
+
+        st_id = st.get("id") or "default"
+        st_state = get_streamer_state(state, f"guild:{guild_id}:{st_id}")
+        health = await asyncio.to_thread(_inspect_streamer_health_sync, st, g_cfg, st_state)
+        health["warnings"].extend(extra_warnings)
+
+        if not wh_alive or health["warnings"]:
+            has_issue = True
+
+        test_line = ""
+        if 시험알람발송:
+            if wh_alive:
+                ok_prev, prev_msg = await asyncio.to_thread(
+                    send_preview_for_streamer, st, g_cfg, f"서버:{guild_name}"
+                )
+                if ok_prev:
+                    test_line = f"📨 **시험 알람**: {prev_msg}"
+                else:
+                    test_line = f"📨 **시험 알람**: ⚠️ {prev_msg}"
+                    has_issue = True
+            else:
+                test_line = "📨 **시험 알람**: ❌ 웹후크 오류로 발송 건너뜀"
+                has_issue = True
+
+        streamer_reports.append((st, webhook_status, health, test_line))
+
+    if guild_modified:
+        save_guild_settings(guild_id, guild_name=guild_name, guild_streamers=streamers)
+
+    embed = discord.Embed(
+        title=f"🩺 {guild_name} — 알림 시스템 종합 점검 리포트",
+        description=(
+            f"• **🔄 백그라운드 순찰 엔진**: {hb_text}\n"
+            f"• **🔐 네이버 쿠키**: {cookie_report['naver']}\n"
+            f"• **🔑 X(트위터) 쿠키**: {cookie_report['x']}"
+        ),
+        color=0xF59E0B if has_issue else 0x00FFA3,
+    )
+
+    if not streamer_reports:
+        embed.add_field(
+            name="📭 등록된 방송인 없음",
+            value="아직 이 서버에 등록된 방송인이 없습니다. `/알림추가`, `/카페연동`, 또는 `/트위터연동`으로 추가해 보세요!",
+            inline=False,
+        )
+    else:
+        for st, webhook_status, health, test_line in streamer_reports[:10]:
+            ch_id = st.get("discord_channel_id")
+            ch_tag = f"<#{ch_id}>" if ch_id else "기본 웹후크"
+            state_tag = "🟢 ON" if st.get("enabled", True) else "⏸️ OFF"
+            lines = [
+                f"• **수신 채널 / 웹후크**: {ch_tag} | {webhook_status}",
+                f"• **📺 치지직**: {health['chzzk']}",
+                f"• **☕ 네이버 카페**: {health['cafe']}",
+                f"• **🐦 X(트위터)**: {health['x']}",
+            ]
+            if 시험알람발송 and test_line:
+                lines.append(f"• {test_line}")
+            if health["warnings"]:
+                lines.append(f"• **⚠️ 주의사항**: {' / '.join(health['warnings'])}")
+
+            val_str = "\n".join(lines)
+            if len(val_str) > 1000:
+                val_str = val_str[:997] + "..."
+            embed.add_field(
+                name=f"🔔 {st.get('name', '방송인')} ({state_tag})",
+                value=val_str,
+                inline=False,
+            )
+
+    extra_note = (
+        f" (상위 10명 표시 / 전체 {len(streamer_reports)}명)"
+        if len(streamer_reports) > 10
+        else ""
+    )
+    embed.set_footer(
+        text=f"점검 대상: {len(streamer_reports)}명{extra_note} | 시험 알람 발송: {'ON' if 시험알람발송 else 'OFF'}"
+    )
+
+    log_event(
+        f"[디스코드 봇:{guild_name}] 알림 시스템 종합 점검 완료 (대상 {len(streamer_reports)}명, 시험알람={시험알람발송})"
+    )
+    await interaction.followup.send(embed=embed)
+
+
+@bot_client.tree.command(
+    name="알림점검",
+    description="감시 엔진·웹후크(자동 복구)·쿠키·수집기 기준점을 정밀 점검하고 선택 시 시험 알람을 발송합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="특정 방송인만 집중 점검하려면 선택하세요 (비워두면 서버 전체를 점검합니다)",
+    시험알람발송="점검과 함께 실제 알림 채널로 테스트 알람 카드를 발송할지 여부 (기본값: True)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_inspect_alarm(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    시험알람발송: bool = True,
+) -> None:
+    await _run_guild_alarm_inspection(interaction, 이름=이름, 시험알람발송=시험알람발송)
+
+
+@bot_client.tree.command(
+    name="알림테스트",
+    description="등록된 방송인의 웹후크·쿠키·수집기를 점검하고 실제 알림 채널로 테스트 알람을 발송합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="테스트할 방송인을 선택하세요 (비워두면 서버 전체 방송인 점검 및 테스트를 진행합니다)",
+    시험알람발송="점검과 함께 실제 알림 채널로 테스트 알람 카드를 발송할지 여부 (기본값: True)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_test_alarm(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    시험알람발송: bool = True,
+) -> None:
+    await _run_guild_alarm_inspection(interaction, 이름=이름, 시험알람발송=시험알람발송)
+
+
+@bot_client.tree.command(
+    name="지금점검",
+    description="순찰 주기를 기다리지 않고 즉시 순찰을 실행하며 알림 시스템 종합 점검 리포트를 표시합니다.",
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.describe(
+    이름="특정 방송인만 집중 점검하려면 선택하세요 (비워두면 서버 전체를 점검합니다)",
+    시험알람발송="점검과 함께 실제 알림 채널로 테스트 알람 카드를 발송할지 여부 (기본값: False)",
+)
+@app_commands.autocomplete(이름=_autocomplete_registered_streamers)
+async def cmd_check_now(
+    interaction: discord.Interaction,
+    이름: Optional[str] = None,
+    시험알람발송: bool = False,
+) -> None:
+    await _run_guild_alarm_inspection(interaction, 이름=이름, 시험알람발송=시험알람발송)
 
 
 @bot_client.tree.command(
@@ -2175,8 +2602,8 @@ async def cmd_help(interaction: discord.Interaction) -> None:
         inline=False,
     )
     embed.add_field(
-        name="📨 `/미리보기`  |  🔄 `/지금점검`",
-        value="현재 방송/카페 상태 카드를 즉시 테스트 발송하거나 즉시 순찰을 실행합니다.",
+        name="🩺 `/알림점검`  |  🧪 `/알림테스트`  |  🔄 `/지금점검`  |  📨 `/미리보기`",
+        value="감시 엔진·웹후크(자동 복구)·쿠키·수집기 기준점을 종합 진단하고 실제 알림 채널로 테스트 알람을 발송합니다.",
         inline=False,
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)

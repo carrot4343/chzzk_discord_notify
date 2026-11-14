@@ -162,3 +162,25 @@ def send_discord_notification(
     except Exception as e:
         log_event(f"[오류] 디스코드 웹후크 요청 중 예외 발생: {e}")
         return False
+
+
+def check_discord_webhook_alive(webhook_url: Optional[str]) -> tuple[bool, str]:
+    """디스코드 웹후크 URL이 실제로 존재하고 활성 상태인지 GET 요청으로 검증합니다."""
+    if not validate_discord_webhook_url(webhook_url):
+        return False, "유효하지 않은 웹후크 URL"
+
+    try:
+        resp = requests.get((webhook_url or "").strip(), timeout=5)
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and data.get("id"):
+                    return True, "정상 연결됨"
+            except Exception:
+                pass
+            return False, "웹후크 응답 확인 실패"
+        if resp.status_code in (401, 404):
+            return False, f"웹후크가 삭제되었거나 만료됨 (HTTP {resp.status_code})"
+        return False, "웹후크 응답 확인 실패"
+    except Exception:
+        return False, "웹후크 응답 확인 실패"

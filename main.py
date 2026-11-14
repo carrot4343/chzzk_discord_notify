@@ -11,7 +11,7 @@ import time
 from typing import Any, Optional
 import webbrowser
 
-from bot.discord_bot import start_discord_bot_background
+from bot.discord_bot import record_monitor_heartbeat, start_discord_bot_background
 from collectors.chzzk import check_chzzk_for_streamer
 from collectors.naver_cafe import check_naver_cafe_for_streamer
 from collectors.twitter_x import check_twitter_x_for_streamer
@@ -203,6 +203,7 @@ def run_all_streamers_cycle() -> None:
                             st["x_profile_image_url"] = meta["x_profile_image_url"]
             save_all_data(fresh_data)
 
+        record_monitor_heartbeat(checked_count, int(data.get("poll_interval_seconds") or 60))
         log_event(
             f"[순찰 완료] 웹 사용자({len(users)}명) · 디스코드 서버({len(guilds)}개)의 활성 알림 총 {checked_count}건 점검 완료 (병렬 처리)"
         )

@@ -902,6 +902,218 @@ class TestXIntegrationSuite(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_16_alarm_inspection_and_webhook_self_healing(self) -> None:
+        """[TC-16] /알림점검·/알림테스트·/지금점검 명령어, 웹후크 자동 복구, 기준점 확인 및 시험 알람 제어 검증"""
+        from notifiers import discord_webhook
+
+        cmd_names = {c.name for c in discord_bot.bot_client.tree.get_commands()}
+        self.assertIn("알림점검", cmd_names)
+        self.assertIn("알림테스트", cmd_names)
+        self.assertIn("지금점검", cmd_names)
+
+        # 1) check_discord_webhook_alive 검증
+        self.assertFalse(discord_webhook.check_discord_webhook_alive("http://127.0.0.1/hook")[0])
+        ok_resp = MagicMock(status_code=200)
+        ok_resp.json.return_value = {"id": "999"}
+        dead_resp = MagicMock(status_code=404)
+        with patch("notifiers.discord_webhook.requests.get", return_value=ok_resp):
+            self.assertEqual(
+                discord_webhook.check_discord_webhook_alive(
+                    "https://discord.com/api/webhooks/111/good"
+                ),
+                (True, "정상 연결됨"),
+            )
+        with patch("notifiers.discord_webhook.requests.get", return_value=dead_resp):
+            alive, reason = discord_webhook.check_discord_webhook_alive(
+                "https://discord.com/api/webhooks/111/dead"
+            )
+            self.assertFalse(alive)
+            self.assertIn("404", reason)
+
+        # 2) 순찰 하트비트 기록 확인
+        discord_bot.record_monitor_heartbeat(3, 60)
+        hb = discord_bot.get_monitor_heartbeat()
+        self.assertEqual(hb["last_checked_count"], 3)
+        self.assertEqual(hb["poll_interval_seconds"], 60)
+        self.assertGreater(hb["last_cycle_ts"], 0.0)
+
+        sample_st = {
+            "id": "st_inspect_1",
+            "enabled": True,
+            "name": "탬탬버린",
+            "chzzk_channel_id": "a7e175625fdea5a7d98428302b7aa57f",
+            "cafe_club_id": "30688884",
+            "cafe_member_key": "member_key_1",
+            "x_screen_name": "2chamcham2",
+            "x_user_id": "555",
+            "discord_channel_id": "555666",
+            "custom_webhook_url": "https://discord.com/api/webhooks/111/dead_hook",
+            "notify_chzzk_open": True,
+            "notify_cafe_article": True,
+            "notify_x_post": True,
+        }
+        g_cfg = {
+            "naver_nid_aut": "aut_1",
+            "naver_nid_ses": "ses_1",
+            "x_auth_token": "tok_1",
+            "x_ct0": "ct0_1",
+        }
+        fake_state = {
+            "streamers": {
+                "guild:111:st_inspect_1": {
+                    "chzzk": {"initialized": True, "status": "CLOSE"},
+                    "naver_cafe": {
+                        "articles_initialized": True,
+                        "last_article_id": 100,
+                        "comments_initialized": True,
+                        "last_comment_id": 500,
+                    },
+                    "twitter_x": {
+                        "initialized": True,
+                        "last_tweet_id": 2000,
+                        "user_id": "555",
+                    },
+                }
+            }
+        }
+
+        async def _run() -> None:
+            fake_ch = MagicMock(spec=discord_bot.discord.TextChannel)
+            fake_guild = MagicMock()
+            fake_guild.name = "테스트서버"
+            fake_guild.get_channel.return_value = fake_ch
+
+            def _make_inter(is_admin: bool = True):
+                inter = MagicMock()
+                inter.guild = fake_guild
+                inter.guild_id = 111
+                inter.user.guild_permissions.manage_guild = is_admin
+                inter.response.defer = unittest.mock.AsyncMock()
+                inter.response.send_message = unittest.mock.AsyncMock()
+                inter.followup.send = unittest.mock.AsyncMock()
+                return inter
+
+            saved_holder: list[list[dict]] = []
+
+            def _fake_save(gid, guild_name=None, guild_global=None, guild_streamers=None, channel_webhooks=None):
+                if guild_streamers is not None:
+                    saved_holder.append(guild_streamers)
+
+            mock_cb = MagicMock()
+            prev_cb = discord_bot._bot_check_now_cb
+            discord_bot.set_bot_check_now_callback(mock_cb)
+            try:
+                # A) 웹후크 사망 감지 -> 자동 복구(Self-Healing) + 시험 알람 발송
+                inter_a = _make_inter(True)
+                with patch(
+                    "bot.discord_bot.load_guild_settings",
+                    return_value={"global": g_cfg, "streamers": [sample_st]},
+                ), patch("bot.discord_bot.load_state", return_value=fake_state), patch(
+                    "bot.discord_bot.check_discord_webhook_alive",
+                    return_value=(False, "웹후크가 삭제되었거나 만료됨 (HTTP 404)"),
+                ), patch(
+                    "bot.discord_bot._ensure_channel_webhook",
+                    new=unittest.mock.AsyncMock(
+                        return_value="https://discord.com/api/webhooks/111/repaired_hook"
+                    ),
+                ) as mock_repair, patch(
+                    "bot.discord_bot.save_guild_settings", side_effect=_fake_save
+                ), patch(
+                    "bot.discord_bot._fetch_chzzk_followings_sync",
+                    return_value=(True, "성공", [{"channelId": "c1"}]),
+                ), patch(
+                    "bot.discord_bot.extract_x_user_info",
+                    return_value={"user_id": "555", "screen_name": "2chamcham2"},
+                ), patch(
+                    "bot.discord_bot.fetch_chzzk_live_detail",
+                    return_value={"status": "CLOSE", "liveTitle": "방제"},
+                ), patch(
+                    "bot.discord_bot.fetch_member_articles",
+                    return_value=[{"articleId": 100}],
+                ), patch(
+                    "bot.discord_bot.fetch_member_comments",
+                    return_value=[{"commentId": 500}],
+                ), patch(
+                    "bot.discord_bot.fetch_x_user_tweets",
+                    return_value=[{"id": 2000}],
+                ), patch(
+                    "bot.discord_bot.send_preview_for_streamer",
+                    return_value=(True, "✅ 탬탬버린 미리보기 카드 3건을 디스코드로 전송했습니다!"),
+                ) as mock_preview:
+                    await discord_bot.cmd_inspect_alarm.callback(
+                        inter_a, 이름=None, 시험알람발송=True
+                    )
+                    mock_cb.assert_called_once()
+                    mock_repair.assert_awaited_once_with(fake_ch, "111", "테스트서버")
+                    self.assertEqual(
+                        sample_st["custom_webhook_url"],
+                        "https://discord.com/api/webhooks/111/repaired_hook",
+                    )
+                    self.assertEqual(len(saved_holder), 1)
+                    mock_preview.assert_called_once()
+
+                    sent_embed = inter_a.followup.send.call_args.kwargs["embed"]
+                    self.assertIn("알림 시스템 종합 점검 리포트", sent_embed.title)
+                    self.assertIn("백그라운드 순찰 엔진", sent_embed.description)
+                    self.assertIn("네이버 쿠키", sent_embed.description)
+                    self.assertIn("X(트위터) 쿠키", sent_embed.description)
+                    field_val = sent_embed.fields[0].value
+                    self.assertIn("자동 복구 완료", field_val)
+                    self.assertIn("#100", field_val)
+                    self.assertIn("#500", field_val)
+                    self.assertIn("#2000", field_val)
+                    self.assertIn("시험 알람", field_val)
+
+                # B) /지금점검(시험알람발송=False) 시 시험 알람 미발송 검증
+                inter_b = _make_inter(True)
+                with patch(
+                    "bot.discord_bot.load_guild_settings",
+                    return_value={"global": g_cfg, "streamers": [sample_st]},
+                ), patch("bot.discord_bot.load_state", return_value=fake_state), patch(
+                    "bot.discord_bot.check_discord_webhook_alive",
+                    return_value=(True, "정상 연결됨"),
+                ), patch(
+                    "bot.discord_bot._ensure_channel_webhook",
+                    new=unittest.mock.AsyncMock(),
+                ) as mock_repair_b, patch(
+                    "bot.discord_bot._fetch_chzzk_followings_sync",
+                    return_value=(True, "성공", []),
+                ), patch(
+                    "bot.discord_bot.extract_x_user_info",
+                    return_value={"user_id": "555", "screen_name": "2chamcham2"},
+                ), patch(
+                    "bot.discord_bot.fetch_chzzk_live_detail",
+                    return_value={"status": "OPEN", "liveTitle": "방송중"},
+                ), patch(
+                    "bot.discord_bot.fetch_member_articles", return_value=[]
+                ), patch(
+                    "bot.discord_bot.fetch_member_comments", return_value=[]
+                ), patch(
+                    "bot.discord_bot.fetch_x_user_tweets", return_value=[]
+                ), patch(
+                    "bot.discord_bot.send_preview_for_streamer"
+                ) as mock_preview_b:
+                    await discord_bot.cmd_check_now.callback(
+                        inter_b, 이름="탬탬버린", 시험알람발송=False
+                    )
+                    mock_repair_b.assert_not_called()
+                    mock_preview_b.assert_not_called()
+                    sent_embed_b = inter_b.followup.send.call_args.kwargs["embed"]
+                    self.assertIn("시험 알람 발송: OFF", sent_embed_b.footer.text)
+
+                # C) 비관리자 실행 차단 검증
+                non_admin = _make_inter(False)
+                await discord_bot.cmd_test_alarm.callback(non_admin)
+                non_admin.response.send_message.assert_awaited_once()
+                self.assertIn(
+                    "서버 관리하기",
+                    non_admin.response.send_message.call_args.args[0],
+                )
+            finally:
+                discord_bot._bot_check_now_cb = prev_cb
+
+        asyncio.run(_run())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
